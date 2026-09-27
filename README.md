@@ -1,7 +1,8 @@
-# IconRightClick — Generate Mobile App Icons from a PNG
+# IconRightClick — Prepare Mobile Store Images from a PNG
 
 Right-click any `.png` in Windows Explorer and generate **Android-** and **iOS-compliant**
-app icon sets from it, following current (2026) Google and Apple guidance.
+app icon sets or resize screenshots for **App Store Connect** and **Google Play Console**,
+following current (2026) Google and Apple guidance.
 
 The tool works from a **single flat PNG** — an exported logo or a full-bleed image.
 You do **not** need layered artwork or separate foreground/background files. Everything
@@ -31,8 +32,9 @@ for this tool.
 1. Right-click a `.png` file in Explorer.
 2. On **Windows 11**, click **"Show more options"** (or press **Shift+F10**) to open the
    classic context menu.
-3. Choose **"Generate Mobile App Icons"**.
-4. A console window shows progress, then the output folder opens in Explorer.
+3. Choose either **"Generate Mobile App Icons"** or one of the
+   **"Resize Screenshot - ..."** commands.
+4. A console window shows progress, then Explorer opens to the output.
 
 > **Windows 11 caveat (by design):** this entry appears in the **classic** ("Show more
 > options" / Shift+F10) menu, **not** the new compact Windows 11 menu. Adding items to the
@@ -44,16 +46,42 @@ for this tool.
 
 ```powershell
 .\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png"
+
+# Screenshot orientation follows the source automatically.
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset Apple-iPhone-1284x2778
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset GooglePlay-1080x1920
 ```
 
-- `-Path <string>` — the source PNG (required).
-- `-NoInteractive` — suppress the end-of-run "Press Enter to close" prompt (used for
-  automation/testing). Interactive context-menu runs omit this so the window stays open
-  if there's an error.
+- Both scripts require `-Path <string>` and support `-NoInteractive` for automation.
+- `Resize-StoreScreenshot.ps1` also requires one of the documented `-Preset` values.
 
 ---
 
-## What gets generated
+## Screenshot resize presets
+
+The classic right-click menu provides these resize commands. Each label shows its portrait
+canvas; a landscape source automatically receives the reversed dimensions.
+
+| Menu preset | Portrait output | Landscape output |
+| --- | ---: | ---: |
+| Apple iPhone — 1242 x 2688 | 1242 x 2688 | 2688 x 1242 |
+| Apple iPhone — 1284 x 2778 | 1284 x 2778 | 2778 x 1284 |
+| Apple iPad — 2064 x 2752 | 2064 x 2752 | 2752 x 2064 |
+| Apple iPad — 2048 x 2732 | 2048 x 2732 | 2732 x 2048 |
+| Google Play — 1080 x 1920 | 1080 x 1920 | 1920 x 1080 |
+
+The result is written beside the source as an opaque 24-bit PNG. The source aspect ratio
+is preserved—there is no stretching. If it does not match the target canvas, the script
+centers it and adds white padding. Existing files are never overwritten; later runs add
+`-2`, `-3`, and so on.
+
+The Google Play preset uses Google's current recommendation for apps that want to be
+eligible for screenshot-based recommendation surfaces. Play Console accepts other phone
+screenshot sizes too; see the verified requirements below.
+
+---
+
+## What the icon generator produces
 
 Output goes to a sibling folder named `<basename>-icons` next to the source PNG. If that
 folder already exists, `<basename>-icons-2`, `-3`, … is used instead (nothing is
@@ -106,14 +134,15 @@ transparent background) and **fully-opaque full-bleed PNGs** (no alpha channel a
 ## Install / Uninstall (per-user, no admin)
 
 ```powershell
-# Add the right-click verb
+# Add the right-click icon and screenshot commands
 .\install.ps1
 
 # Remove it
 .\uninstall.ps1
 ```
 
-`install.ps1` creates this key under the current user (no elevation needed):
+`install.ps1` creates per-user shell keys (no elevation needed). The icon generator keeps
+its existing key:
 
 ```
 HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons
@@ -123,11 +152,43 @@ HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons
         (default) = powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<...>\Make-MobileIcons.ps1" -Path "%1"
 ```
 
-`uninstall.ps1` removes that key.
+Each screenshot preset is registered as a direct verb under the same `.png\shell`
+location. Re-run `install.ps1` after updating the project so Explorer receives the new
+entries.
+
+`uninstall.ps1` removes both the icon and screenshot commands.
 
 ---
 
-## Specs followed (verified 2026-07-20)
+## Screenshot specifications followed (verified 2026-09-20)
+
+### Apple — App Store Connect
+
+- The iPhone presets produce all four requested 6.5-inch accepted sizes: 1242 x 2688,
+  2688 x 1242, 1284 x 2778, and 2778 x 1284.
+- The iPad presets produce all four accepted 13-inch sizes: 2064 x 2752, 2752 x 2064,
+  2048 x 2732, and 2732 x 2048.
+- App Store Connect accepts PNG, JPEG, and JPG screenshots, but screenshots cannot contain
+  transparency or an alpha channel. The resizer therefore writes opaque 24-bit PNGs.
+- Source: Apple App Store Connect Help — Screenshot specifications:
+  https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
+
+### Google — Play Console screenshots
+
+- Required format: JPEG or 24-bit PNG without alpha.
+- Required dimensions: the short side must be at least 320 px, the long side at most
+  3840 px, and the long side cannot exceed twice the short side.
+- For apps to be eligible for recommendation formats that use screenshots, Google asks
+  for at least four screenshots with at least 1080 px resolution: 1080 x 1920 or larger
+  at 9:16 for portrait, or 1920 x 1080 or larger at 16:9 for landscape.
+- For tablets and Chromebooks, Google asks for at least four large-screen screenshots,
+  dimensions between 1080 and 7680 px, and a 9:16 or 16:9 aspect ratio.
+- Source: Google Play Console Help — Add preview assets to showcase your app:
+  https://support.google.com/googleplay/android-developer/answer/9866151
+
+---
+
+## App icon specifications followed (verified 2026-07-20)
 
 ### Apple — iOS / iPadOS (iOS 26 "Liquid Glass")
 

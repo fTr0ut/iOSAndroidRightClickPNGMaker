@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Remove the right-click "Generate Mobile App Icons" verb for .png files.
+    Remove the IconRightClick tools from the .png right-click menu.
 #>
 [CmdletBinding()]
 param()
@@ -8,12 +8,25 @@ param()
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$key = 'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons'
+$keys = @(
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot01',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot02',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot03',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot04',
+    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot05'
+)
 
-if (Test-Path -LiteralPath $key) {
-    Remove-Item -Path $key -Recurse -Force
-    Write-Host ("Removed: " + $key)
+$removed = 0
+foreach ($key in $keys) {
+    if (Test-Path -LiteralPath $key) {
+        Remove-Item -LiteralPath $key -Recurse -Force
+        Write-Host ("Removed: " + $key)
+        $removed = $removed + 1
+    }
 }
-else {
-    Write-Host ("Nothing to remove (key not present): " + $key)
+
+if ($removed -eq 0) {
+    Write-Host "Nothing to remove (IconRightClick registry keys were not present)."
 }
