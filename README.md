@@ -32,8 +32,9 @@ for this tool.
 1. Right-click a `.png` file in Explorer.
 2. On **Windows 11**, click **"Show more options"** (or press **Shift+F10**) to open the
    classic context menu.
-3. Choose either **"Generate Mobile App Icons"** or one of the
-   **"Resize Screenshot - ..."** commands.
+3. Choose **"Generate Mobile App Icons"** and pick **Android + iOS**, **Android only**
+   or **iOS only** from its submenu, or choose one of the **"Resize Screenshot - ..."**
+   commands.
 4. A console window shows progress, then Explorer opens to the output.
 
 > **Windows 11 caveat (by design):** this entry appears in the **classic** ("Show more
@@ -46,13 +47,16 @@ for this tool.
 
 ```powershell
 .\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png"
+.\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png" -Platform Android   # or iOS
 
 # Screenshot orientation follows the source automatically.
 .\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset Apple-iPhone-1284x2778
 .\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset GooglePlay-1080x1920
 ```
 
-- Both scripts require `-Path <string>` and support `-NoInteractive` for automation.
+- Both scripts require `-Path <string>` and support `-NoInteractive` for automation
+  (no Explorer window, no "Press Enter" prompt).
+- `Make-MobileIcons.ps1` takes an optional `-Platform All|Android|iOS` (default `All`).
 - `Resize-StoreScreenshot.ps1` also requires one of the documented `-Preset` values.
 
 ---
@@ -83,15 +87,18 @@ screenshot sizes too; see the verified requirements below.
 
 ## What the icon generator produces
 
-Output goes to a sibling folder named `<basename>-icons` next to the source PNG. If that
-folder already exists, `<basename>-icons-2`, `-3`, … is used instead (nothing is
-overwritten).
+Output goes to a sibling folder named `<basename>-icons` next to the source PNG
+(`<basename>-icons-android` / `<basename>-icons-ios` for the single-platform commands). If
+that folder already exists, `-2`, `-3`, … is appended instead (nothing is overwritten). The
+folder layout inside is the same in every mode, so paths into `Android/` or `iOS/` stay
+stable.
 
 - If the source is **not square**, it is padded to a square canvas with **transparent**
   pixels (centered) before generating; this is noted in the run summary.
-- A **background color** is sampled automatically from the image (alpha-weighted average;
-  falls back to white). It is used for the Android adaptive background, the opaque legacy
-  launcher icons, and the Play Store icon.
+- For Android, the image is **analysed** to find where its visible content is and what
+  background sits behind it (see [How the Android artwork is fitted](#how-the-android-artwork-is-fitted)).
+  The resulting **background color** is used for the adaptive background layer, and the
+  legacy and Play Store icons are rendered from the same framing.
 
 ```
 <basename>-icons/
@@ -105,13 +112,14 @@ overwritten).
 └─ Android/
    ├─ PlayStore-512.png                     512x512, opaque (Play Store listing)
    └─ res/
-      ├─ mipmap-mdpi/    ic_launcher.png (48)   ic_launcher_foreground.png (108)   ic_launcher_monochrome.png (108)
-      ├─ mipmap-hdpi/    ic_launcher.png (72)   ic_launcher_foreground.png (162)   ic_launcher_monochrome.png (162)
-      ├─ mipmap-xhdpi/   ic_launcher.png (96)   ic_launcher_foreground.png (216)   ic_launcher_monochrome.png (216)
-      ├─ mipmap-xxhdpi/  ic_launcher.png (144)  ic_launcher_foreground.png (324)   ic_launcher_monochrome.png (324)
-      ├─ mipmap-xxxhdpi/ ic_launcher.png (192)  ic_launcher_foreground.png (432)   ic_launcher_monochrome.png (432)
-      ├─ mipmap-anydpi-v26/ic_launcher.xml   adaptive-icon: background + foreground + monochrome
-      └─ values/ic_launcher_background.xml   <color name="ic_launcher_background"> (sampled)
+      ├─ mipmap-mdpi/    ic_launcher.png + ic_launcher_round.png (48)    ic_launcher_foreground.png + ic_launcher_monochrome.png (108)
+      ├─ mipmap-hdpi/    ic_launcher.png + ic_launcher_round.png (72)    ic_launcher_foreground.png + ic_launcher_monochrome.png (162)
+      ├─ mipmap-xhdpi/   ic_launcher.png + ic_launcher_round.png (96)    ic_launcher_foreground.png + ic_launcher_monochrome.png (216)
+      ├─ mipmap-xxhdpi/  ic_launcher.png + ic_launcher_round.png (144)   ic_launcher_foreground.png + ic_launcher_monochrome.png (324)
+      ├─ mipmap-xxxhdpi/ ic_launcher.png + ic_launcher_round.png (192)   ic_launcher_foreground.png + ic_launcher_monochrome.png (432)
+      ├─ mipmap-anydpi-v26/ic_launcher.xml         adaptive-icon: background + foreground + monochrome
+      ├─ mipmap-anydpi-v26/ic_launcher_round.xml   same layers, for android:roundIcon
+      └─ values/ic_launcher_background.xml         <color name="ic_launcher_background"> (sampled)
 ```
 
 ### How each layer is derived (from one flat PNG)
@@ -121,13 +129,33 @@ overwritten).
 | iOS `icon_1024.png` / `AppStore-1024.png` | Scaled to 1024², **flattened onto white**, alpha channel removed (App Store icons must be fully opaque). |
 | iOS `icon_1024_dark.png` | Content brightness reduced (~90%) and **flattened onto black** — an automatic, recognizable dark-mode treatment. Judgment call (see notes). |
 | iOS `icon_1024_tinted.png` | **Grayscale, alpha preserved.** iOS applies the system tint to the luminance; transparency keeps the tint on the artwork only. |
-| Android `ic_launcher.png` (legacy) | Full-bleed square, scaled per density, flattened onto the sampled background color (opaque). |
-| Android `ic_launcher_foreground.png` | Whole image scaled into the **adaptive safe zone (66/108 of the canvas)**, centered on a transparent canvas of the full adaptive size. |
-| Android `ic_launcher_monochrome.png` | Same safe-zone scaling, **alpha-preserving grayscale.** For a logo on transparency, the alpha becomes the tinted silhouette. For a fully-opaque full-bleed image (no alpha), the whole safe-zone square is opaque, so the system tints the full tile — still valid, just less "cut-out". Author a dedicated monochrome asset if you want a specific silhouette. |
-| Android `PlayStore-512.png` | Scaled to 512², flattened onto the sampled background color (opaque — Play requires a non-transparent icon). |
+| Android `ic_launcher_foreground.png` | Image scaled so its **farthest visible pixel lies on the 66dp safe-zone circle**, centered on a transparent 108dp canvas (see below). |
+| Android `ic_launcher_monochrome.png` | Same placement, grayscale. The system keeps only the alpha and tints it. For a logo on transparency, the alpha is the silhouette. For art on a plain tile, only what stands out from the tile is kept (e.g. the white mark and lines), so the themed icon is a real glyph rather than a solid square. |
+| Android `ic_launcher.png` / `ic_launcher_round.png` (legacy) | What a launcher shows: background + foreground, cropped to the 72dp viewport. Square is opaque; round is circle-masked with transparency. |
+| Android `PlayStore-512.png` | The same 72dp framing at 512², opaque (Play requires a non-transparent icon and rounds the corners itself). |
 
 Both input shapes are handled and tested: **flat PNGs with transparency** (logo on a
 transparent background) and **fully-opaque full-bleed PNGs** (no alpha channel at all).
+
+### How the Android artwork is fitted
+
+Launchers show only the inner 72dp of the 108dp adaptive layers and cut it to an OEM shape
+(circle, squircle, rounded square, …). The **circle is the tightest mask**. Scaling a
+full-bleed square to 66dp therefore still loses its corners, and on a squircle anything
+near the edges (e.g. a frame or waves along the bottom). To avoid that, the generator looks
+at the image before placing it:
+
+| Source | Background layer | What counts as content |
+| --- | --- | --- |
+| Has transparency | Average color of the image (falls back to white) | Non-transparent pixels |
+| Opaque, plain border (art on a flat tile) | The **border color** itself, so there is no visible seam | Pixels that differ from the border color. The outer 1% is ignored and repainted with the border color, which also removes stray export slivers along the edges |
+| Opaque, varied border (gradient, photo) | Average border color | The whole square. Edges are feathered into the background |
+
+The artwork is then scaled until the farthest content pixel sits on the **66dp safe-zone
+circle** (radius 33dp). Nothing is cropped under any mask shape, including parallax/pulse
+effects. Art whose content stays inside the inscribed circle is drawn larger than 66dp, and a
+square filled edge to edge ends up at 46.7dp. The run prints the result, e.g.
+`content reaches 1.21x its half-width -> drawn at 54.7dp of the 108dp layer`.
 
 ---
 
@@ -141,16 +169,24 @@ transparent background) and **fully-opaque full-bleed PNGs** (no alpha channel a
 .\uninstall.ps1
 ```
 
-`install.ps1` creates per-user shell keys (no elevation needed). The icon generator keeps
-its existing key:
+`install.ps1` creates per-user shell keys (no elevation needed). The icon generator is a
+cascading submenu. The parent has only `MUIVerb` and an empty `SubCommands` value, and its
+entries live in its own `shell` subkey:
 
 ```
 HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons
-    (default) = "Generate Mobile App Icons"
-    Icon      = <powershell.exe>,0
-    \command
-        (default) = powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<...>\Make-MobileIcons.ps1" -Path "%1"
+    MUIVerb     = "Generate Mobile App Icons"
+    SubCommands = ""
+    Icon        = <powershell.exe>,0
+    \shell
+        \01All      (default) = "Android + iOS"   \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform All
+        \02Android  (default) = "Android only"    \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform Android
+        \03iOS      (default) = "iOS only"        \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform iOS
 ```
+
+The installer deletes and recreates `MakeMobileIcons` each time. A leftover `(default)`
+value or `command` subkey from the older single-command install would otherwise turn the
+parent back into a plain verb.
 
 Each screenshot preset is registered as a direct verb under the same `.png\shell`
 location. Re-run `install.ps1` after updating the project so Explorer receives the new
@@ -215,19 +251,31 @@ entries.
 
 ### Google — Android
 
-- **Adaptive icon layers are 108×108 dp**; the **inner 66 dp** is the safe zone (the outer
-  18 dp per edge may be clipped by the launcher's mask). Key artwork must stay inside the
-  safe zone. This tool scales the whole flat image to **66/108** of each canvas, centered.
+*(Adaptive icon and Play Store icon pages re-verified 2026-09-27.)*
+
+- **Adaptive icon layers are 108×108 dp.** Android's docs: "Use a logo that's at least
+  48x48 dp. It must not exceed 66x66 dp, because the inner 66x66 dp of the icon appears
+  within the masked viewport." The outer 18 dp per edge is "reserved for masking and to
+  create visual effects such as parallax or pulsing".
+- **The 66 dp limit is for a logo, not a full square.** Masks are OEM-defined, and a circle
+  (e.g. Pixel's default) cuts off the corners of a 66 dp square. This tool therefore fits
+  the artwork's farthest visible pixel to the **66 dp circle**. See
+  [How the Android artwork is fitted](#how-the-android-artwork-is-fitted).
 - **Adaptive layer pixel sizes:** mdpi 108, hdpi 162, xhdpi 216, xxhdpi 324, xxxhdpi 432.
 - **Legacy `ic_launcher` pixel sizes:** mdpi 48, hdpi 72, xhdpi 96, xxhdpi 144, xxxhdpi 192.
+- **`android:roundIcon`:** launchers that use it apply a circular mask to it. Android Studio's
+  template manifest points it at `@mipmap/ic_launcher_round`, so this tool writes a matching
+  `ic_launcher_round.xml` (same adaptive layers) and legacy `ic_launcher_round.png`.
+  Without them, a template project would keep showing its old round icon.
 - **Themed / monochrome icons (Android 13+, API 33):** provide a single `<monochrome>`
   layer; the system recolors it from the wallpaper/theme. Android 16 QPR2-era releases can
   auto-generate a monochrome layer for apps that lack one, but shipping your own is still
   recommended. Declared in `res/mipmap-anydpi-v26/ic_launcher.xml`.
-- **Google Play Store listing icon:** 512×512 px, 32-bit PNG, sRGB, under 1024 KB, and
-  **not transparent** (use a solid background). Play applies rounded corners, shadow, and
-  masking dynamically — don't bake them in. From **March 31, 2026** Play renders icons with
-  a **30% corner radius**, so keep key elements within ~15–18% internal padding.
+- **Google Play Store listing icon:** 512×512 px, 32-bit PNG, sRGB, under 1024 KB, full
+  square, and preferably **not transparent** (transparent areas show Play's UI color).
+  Play applies masking with a **corner radius of 30% of the icon size**, plus a shadow.
+  Don't bake either in. This tool renders the Play icon with the same framing as the
+  launcher icon, so the 30% corners never reach the artwork.
 - Sources:
   - Android — Adaptive icons: https://developer.android.com/develop/ui/compose/system/icon_design_adaptive
   - Android — Create app icons (Image Asset Studio, density sizes): https://developer.android.com/studio/write/create-app-icons
@@ -243,10 +291,17 @@ entries.
   `icon_1024_dark.png` with a bespoke dark design for production if desired.
 - **Tinted iOS variant** is grayscale with alpha, which is what the system expects to apply
   its tint to.
-- **Background color** is an alpha-weighted average of the source (falls back to white).
-  For a specific brand background, edit `res/values/ic_launcher_background.xml` and
-  re-flatten as needed.
-- **Monochrome from an opaque full-bleed image** tints the whole safe-zone tile (there's no
-  alpha silhouette to cut out). This is valid; supply a dedicated alpha silhouette if you
-  want a specific themed shape.
+- **Background color** is the border color for art on a plain tile, the average border
+  color for other opaque images, and the alpha-weighted average for transparent sources
+  (falls back to white). For a specific brand background, edit
+  `res/values/ic_launcher_background.xml`. If you override it (e.g. an Expo
+  `adaptiveIcon.backgroundColor`), use the exported value: a different color shows as a
+  ring around art on a plain tile.
+- **Opaque images with a varied border** (gradients, photos) can't be separated into
+  content and background, so the whole square is fitted inside the safe-zone circle. It is
+  then visible as a square on the average border color. Supply a transparent-background
+  logo if you want the art larger.
+- **Monochrome from an opaque image with a varied border** is a feathered grayscale square
+  (there's no silhouette to cut out), so the system tints the whole square. Supply a
+  dedicated alpha silhouette if you want a specific themed shape.
 - The tool never overwrites: repeated runs create `-icons-2`, `-icons-3`, …

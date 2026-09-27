@@ -5,8 +5,9 @@
 .DESCRIPTION
     Registers a classic shell verb under HKCU so it needs no administrator rights.
     On Windows 11 this appears in the "Show more options" (Shift+F10) menu.
-    Adds the existing icon generator plus direct App Store Connect and Google
-    Play Console screenshot presets. Run uninstall.ps1 to remove them.
+    Adds the icon generator (a submenu: Android + iOS, Android only, iOS only)
+    plus direct App Store Connect and Google Play Console screenshot presets.
+    Run uninstall.ps1 to remove them.
 #>
 [CmdletBinding()]
 param()
@@ -29,18 +30,41 @@ if (-not (Test-Path -LiteralPath $resizeTarget)) {
 $psExe = (Get-Command powershell.exe).Source
 $iconValue = $psExe + ',0'
 
-$command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $target + '" -Path "%1"'
-
 $pngShellRoot = 'HKCU:\Software\Classes\SystemFileAssociations\.png\shell'
 $key = Join-Path $pngShellRoot 'MakeMobileIcons'
-$cmdKey = $key + '\command'
 
-New-Item -Path $key -Force | Out-Null
-Set-ItemProperty -Path $key -Name '(default)' -Value 'Generate Mobile App Icons'
-Set-ItemProperty -Path $key -Name 'Icon' -Value $iconValue
+# "Generate Mobile App Icons" is a cascading submenu. The parent carries only
+# MUIVerb + an empty SubCommands value; its children live in its own "shell"
+# subkey. Start from a clean key: a leftover (default) value or "command"
+# subkey from the earlier single-verb install would turn it back into a plain
+# verb on some Explorer builds.
+$iconCommands = @(
+    @{ Id = '01All';     Label = 'Android + iOS'; Platform = 'All' },
+    @{ Id = '02Android'; Label = 'Android only';  Platform = 'Android' },
+    @{ Id = '03iOS';     Label = 'iOS only';      Platform = 'iOS' }
+)
 
-New-Item -Path $cmdKey -Force | Out-Null
-Set-ItemProperty -Path $cmdKey -Name '(default)' -Value $command
+if (Test-Path -LiteralPath $key) {
+    Remove-Item -LiteralPath $key -Recurse -Force
+}
+New-Item -Path $key | Out-Null
+New-ItemProperty -Path $key -Name 'MUIVerb' -Value 'Generate Mobile App Icons' -PropertyType String | Out-Null
+New-ItemProperty -Path $key -Name 'SubCommands' -Value '' -PropertyType String | Out-Null
+New-ItemProperty -Path $key -Name 'Icon' -Value $iconValue -PropertyType String | Out-Null
+
+foreach ($item in $iconCommands) {
+    $subKey = $key + '\shell\' + $item.Id
+    $subCommandKey = $subKey + '\command'
+    $iconCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $target + '" -Path "%1" -Platform ' + $item.Platform
+
+    New-Item -Path $subKey -Force | Out-Null
+    Set-ItemProperty -Path $subKey -Name '(default)' -Value $item.Label
+    Set-ItemProperty -Path $subKey -Name 'MUIVerb' -Value $item.Label
+    Set-ItemProperty -Path $subKey -Name 'Icon' -Value $iconValue
+
+    New-Item -Path $subCommandKey -Force | Out-Null
+    Set-ItemProperty -Path $subCommandKey -Name '(default)' -Value $iconCommand
+}
 
 # Register each resize preset as a direct verb. This uses the same broadly
 # compatible shell layout as the existing icon generator.
@@ -101,7 +125,10 @@ namespace IconRightClick
 [IconRightClick.ShellChangeNotifier]::NotifyAssociationChanged()
 
 Write-Host "Installed context-menu tools for .png files:"
-Write-Host "  Generate Mobile App Icons"
+Write-Host "  Generate Mobile App Icons >"
+foreach ($item in $iconCommands) {
+    Write-Host ("      " + $item.Label)
+}
 foreach ($item in $resizeCommands) {
     Write-Host ("  " + $item.Label + " (orientation follows source)")
 }
