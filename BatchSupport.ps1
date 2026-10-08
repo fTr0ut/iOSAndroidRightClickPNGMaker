@@ -1,12 +1,16 @@
 <#
 .SYNOPSIS
-    Batch helpers shared by Make-MobileIcons.ps1 and Resize-StoreScreenshot.ps1.
+    Helpers shared by Make-MobileIcons.ps1 and Resize-StoreScreenshot.ps1.
 
 .DESCRIPTION
     Dot-sourced by both scripts; not meant to be run on its own.
 
-    Resolve-SourcePng expands -Path entries (files, folders, wildcards) into the
-    .png files to process.
+    Resolve-SourceImage expands -Path entries (files, folders, wildcards) into
+    the images to process: .png, .jpg/.jpeg and .heic/.heif.
+
+    Get-SourceImageInfo checks that a source is a readable PNG, JPEG or HEIC
+    image and returns the magick arguments that load it upright and in sRGB.
+    Output is always PNG.
 
     Merge-ExplorerSelection turns a multi-file Explorer selection into one run.
     For a command-line verb, Explorer starts a separate process for every
@@ -16,11 +20,14 @@
     Written for Windows PowerShell 5.1.
 #>
 
-function Resolve-SourcePng {
-    # A file is taken as given, a folder contributes the .png files directly
-    # inside it (except names matching $SkipPattern, e.g. earlier output), and
-    # anything else is treated as a wildcard. Duplicates are dropped.
-    # Returns @{ Files = FileInfo[]; Errors = string[] }.
+# File types both tools accept (install.ps1 adds the menus to the same list).
+$SourceImageExtensions = @('.png', '.jpg', '.jpeg', '.heic', '.heif')
+
+function Resolve-SourceImage {
+    # A file is taken as given, a folder contributes the supported images
+    # directly inside it (except names matching $SkipPattern, e.g. earlier
+    # output), and anything else is treated as a wildcard. Duplicates are
+    # dropped. Returns @{ Files = FileInfo[]; Errors = string[] }.
     param(
         [string[]] $Path,
         [string] $SkipPattern
@@ -29,6 +36,7 @@ function Resolve-SourcePng {
     $files = New-Object System.Collections.Generic.List[System.IO.FileInfo]
     $errors = New-Object System.Collections.Generic.List[string]
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $kinds = $SourceImageExtensions -join ', '
 
     foreach ($p in $Path) {
         if ([string]::IsNullOrWhiteSpace($p)) {
@@ -37,13 +45,12 @@ function Resolve-SourcePng {
 
         $found = @()
         if (Test-Path -LiteralPath $p -PathType Container) {
-            # -Filter alone would also match e.g. ".pngx" through 8.3 short names.
-            $found = @(Get-ChildItem -LiteralPath $p -File -Filter '*.png' |
-                Where-Object { $_.Extension -eq '.png' } |
+            $found = @(Get-ChildItem -LiteralPath $p -File |
+                Where-Object { $SourceImageExtensions -contains $_.Extension } |
                 Where-Object { -not $SkipPattern -or $_.Name -notmatch $SkipPattern } |
                 Sort-Object Name)
             if ($found.Count -eq 0) {
-                $errors.Add("No .png files to process in folder: " + $p)
+                $errors.Add("No images (" + $kinds + ") to process in folder: " + $p)
             }
         }
         elseif (Test-Path -LiteralPath $p -PathType Leaf) {
@@ -51,10 +58,10 @@ function Resolve-SourcePng {
         }
         elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($p)) {
             $found = @(Get-ChildItem -Path $p -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Extension -eq '.png' } |
+                Where-Object { $SourceImageExtensions -contains $_.Extension } |
                 Sort-Object FullName)
             if ($found.Count -eq 0) {
-                $errors.Add("No .png files match: " + $p)
+                $errors.Add("No images (" + $kinds + ") match: " + $p)
             }
         }
         else {
@@ -69,6 +76,90 @@ function Resolve-SourcePng {
     }
 
     return @{ Files = $files.ToArray(); Errors = $errors.ToArray() }
+}
+
+function Get-SrgbProfilePath {
+    # Target for converting embedded color profiles (e.g. the Display P3 of
+    # iPhone photos and screenshots). Windows ships one; ImageMagick doesn't.
+    if (-not $env:SystemRoot) {
+        return $null
+    }
+    $path = Join-Path $env:SystemRoot 'System32\spool\drivers\color\sRGB Color Space Profile.icm'
+    if (Test-Path -LiteralPath $path) {
+        return $path
+    }
+    return $null
+}
+
+function Get-SourceImageInfo {
+    # Confirms ImageMagick reads $Source as PNG, JPEG or HEIC (whatever its
+    # extension says) and returns its upright size plus the magick arguments
+    # that load it: first image only, turned upright per its EXIF orientation,
+    # embedded color profile converted to sRGB, metadata (incl. GPS) removed.
+    # Returns @{ Format; Width; Height; Notes = string[]; ReadArgs = string[] }.
+    param([System.IO.FileInfo] $Source)
+
+    if ($SourceImageExtensions -notcontains $Source.Extension) {
+        throw ("Source must be a " + ($SourceImageExtensions -join ', ') + " file. Got: " + $Source.Extension)
+    }
+
+    # -quiet: an image without profiles would otherwise warn about %[profiles].
+    $frame = $Source.FullName + '[0]'
+    $ident = & $script:Magick identify -quiet -format "%m|%w|%h|%[orientation]|%[profiles]|%[icc:description]\n" -- "$frame"
+    if ($LASTEXITCODE -ne 0) {
+        # ImageMagick's own reason is printed just above this message.
+        $hint = ''
+        if ($Source.Extension -match '^\.hei[cf]$') {
+            $hint = " (if it says 'no decode delegate', this ImageMagick build lacks HEIC support;" +
+                " update it with: winget upgrade --id ImageMagick.ImageMagick -e)"
+        }
+        throw ("ImageMagick could not read the image: " + $Source.FullName + $hint)
+    }
+
+    $parts = @(([string] @($ident)[0]).Trim() -split '\|', 6)
+    if ($parts.Count -lt 6 -or $parts[0] -notmatch '^(PNG|JPEG|HEIC|HEIF)$') {
+        throw ("File is not a PNG, JPEG or HEIC image (ImageMagick reports '" + $parts[0] + "').")
+    }
+    [int] $w = $parts[1]
+    [int] $h = $parts[2]
+    $orientation = $parts[3]
+
+    $notes = New-Object System.Collections.Generic.List[string]
+    $readArgs = @($frame, '-auto-orient')
+    if ($orientation -notmatch '^(Undefined|TopLeft)$') {
+        $notes.Add("turned upright (EXIF orientation " + $orientation + ")")
+        # These orientations store the image a quarter turn from upright.
+        if (@('LeftTop', 'RightTop', 'RightBottom', 'LeftBottom') -contains $orientation) {
+            $w, $h = $h, $w
+        }
+    }
+
+    if (@($parts[4] -split ',') -contains 'icc') {
+        $profileName = $parts[5].Trim()
+        if (-not $profileName) {
+            $profileName = 'embedded'
+        }
+        $srgb = Get-SrgbProfilePath
+        if (-not $srgb) {
+            $notes.Add($profileName + " color profile left unconverted (Windows sRGB profile not found)")
+        }
+        else {
+            $readArgs += @('-profile', $srgb)
+            if ($profileName -notmatch '^sRGB') {
+                $notes.Add($profileName + " color converted to sRGB")
+            }
+        }
+    }
+    # -colorspace covers CMYK and grayscale JPEGs without a profile.
+    $readArgs += @('-colorspace', 'sRGB', '-strip')
+
+    return @{
+        Format   = $parts[0]
+        Width    = $w
+        Height   = $h
+        Notes    = $notes.ToArray()
+        ReadArgs = $readArgs
+    }
 }
 
 function Enter-BatchLock {

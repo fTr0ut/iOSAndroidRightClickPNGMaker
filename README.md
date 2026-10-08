@@ -1,11 +1,14 @@
-# IconRightClick — Prepare Mobile Store Images from a PNG
+# IconRightClick — Prepare Mobile Store Images from a PNG, JPG or HEIC
 
-Right-click any `.png` in Windows Explorer and generate **Android-** and **iOS-compliant**
-app icon sets or resize screenshots for **App Store Connect** and **Google Play Console**
-(phones and tablets), following current (2026) Google and Apple guidance. Select one PNG or
-a whole batch: every selected file is processed in a single run.
+Right-click any `.png`, `.jpg`/`.jpeg` or `.heic`/`.heif` in Windows Explorer and generate
+**Android-** and **iOS-compliant** app icon sets or resize screenshots for **App Store
+Connect** and **Google Play Console** (phones and tablets), following current (2026) Google
+and Apple guidance. Select one image or a whole batch: every selected file is processed in
+a single run. Every output file is a **PNG**, whatever the source format (see
+[Source formats](#source-formats-png-jpg-heic)).
 
-The tool works from a **single flat PNG** — an exported logo or a full-bleed image.
+The tool works from a **single flat image** — an exported logo, a full-bleed image or a
+phone photo/screenshot.
 You do **not** need layered artwork or separate foreground/background files. Everything
 (iOS light/dark/tinted, the Android adaptive foreground, background color, and the
 monochrome/themed layer) is derived automatically from that one image. Layered authoring
@@ -23,6 +26,8 @@ for this tool.
   ```
   The generator finds `magick` on `PATH`, and if it isn't there it falls back to
   `C:\Program Files\ImageMagick*\magick.exe`.
+  HEIC sources need an ImageMagick build with HEIC support; the Windows release includes it.
+  To check, run `magick -list format | findstr HEIC` and look for an `r` in the mode column.
 
 ---
 
@@ -30,7 +35,8 @@ for this tool.
 
 ### From the right-click menu (after installing — see below)
 
-1. Select one or more `.png` files in Explorer (up to 100) and right-click.
+1. Select one or more `.png`, `.jpg`/`.jpeg` or `.heic`/`.heif` files in Explorer (up to
+   100) and right-click.
 2. On **Windows 11**, click **"Show more options"** (or press **Shift+F10**) to open the
    classic context menu.
 3. Choose **"Generate Mobile App Icons"** and pick **Android + iOS**, **Android only**
@@ -61,17 +67,22 @@ before the batch starts in the first one (see [Batch processing](#batch-processi
 
 # Wildcards work too.
 .\Resize-StoreScreenshot.ps1 -Path "C:\path\to\shots\home-*.png" -Preset GooglePlay-1080x1920
+
+# JPG and HEIC sources (e.g. straight from a phone); the output is PNG.
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\IMG_0042.HEIC" -Preset Apple-iPhone-1206x2622
+.\Make-MobileIcons.ps1 -Path "C:\path\to\logo.jpg"
 ```
 
-- Both scripts take `-Path` with one or more entries. Each entry can be a `.png` file, a
-  folder (every `.png` directly inside it) or a wildcard. When a folder is given,
-  `Resize-StoreScreenshot.ps1` skips files it wrote on an earlier run.
+- Both scripts take `-Path` with one or more entries. Each entry can be a `.png`, `.jpg`,
+  `.jpeg`, `.heic` or `.heif` file, a folder (every such file directly inside it) or a
+  wildcard. When a folder is given, `Resize-StoreScreenshot.ps1` skips files it wrote on an
+  earlier run.
 - Both support `-NoInteractive` for automation (no Explorer window, no "Press Enter"
   prompt).
 - `Make-MobileIcons.ps1` takes an optional `-Platform All|Android|iOS` (default `All`).
 - `Resize-StoreScreenshot.ps1` also requires one or more of the documented `-Preset` values.
-- A file that fails (e.g. not a real PNG) is reported, and the rest of the batch still
-  runs. The exit code is `1` if anything failed.
+- A file that fails (e.g. not a readable PNG, JPEG or HEIC image) is reported, and the rest
+  of the batch still runs. The exit code is `1` if anything failed.
 
 ### Batch processing
 
@@ -88,6 +99,36 @@ window.
 
 For more than 100 files, run either script from the command line with a folder or wildcard
 as `-Path`.
+
+### Source formats (PNG, JPG, HEIC)
+
+| Extension | Typical source |
+| --- | --- |
+| `.png` | Exported artwork, screenshots |
+| `.jpg`, `.jpeg` | Photos, screenshots saved by other tools |
+| `.heic`, `.heif` | iPhone/iPad photos (the default camera format) |
+
+Every source is normalized the same way before anything else happens, so both tools treat
+the three formats alike:
+
+- **Checked by content, not by name.** A file is accepted when ImageMagick reads it as PNG,
+  JPEG or HEIC, so a `.jpg` that is really a PNG works. Other formats (GIF, WebP, …) are
+  rejected with a message.
+- **Turned upright.** Phones often store a portrait photo sideways and record the rotation
+  in its EXIF data. That rotation is applied first, so the screenshot resizer picks the
+  right orientation and icons aren't sideways. (HEIC files are already decoded upright.)
+- **Converted to sRGB.** iPhone photos (and often screenshots) carry a Display P3 color
+  profile. An embedded profile is converted to sRGB (the color space both stores expect)
+  using the sRGB profile that ships with Windows
+  (`%SystemRoot%\System32\spool\drivers\color\sRGB Color Space Profile.icm`). Without that
+  conversion the colors would look washed out. CMYK and grayscale JPEGs are converted too.
+- **Metadata removed.** EXIF data (camera details and **GPS location**), XMP and color
+  profiles are not copied into any output file.
+- **First image only.** If a HEIC holds several images, only the first is used.
+
+JPG images and HEIC photos have no transparency, so they are treated like an opaque PNG (see
+[How the Android artwork is fitted](#how-the-android-artwork-is-fitted)). For the largest
+Android icon, a logo PNG with a transparent background still works best.
 
 ---
 
@@ -123,13 +164,14 @@ Which to use:
 The result is written beside the source as an opaque 24-bit PNG named
 `<name>-<store>-<width>x<height>.png`. The source aspect ratio is preserved—there is no
 stretching. If it does not match the target canvas, the script centers it and adds white
-padding. Existing files are never overwritten; later runs add `-2`, `-3`, and so on.
+padding. Existing files are never overwritten; later runs add `-2`, `-3`, and so on (as does
+a second source with the same base name, e.g. `shot.jpg` next to `shot.heic`).
 
 ---
 
 ## What the icon generator produces
 
-Output goes to a sibling folder named `<basename>-icons` next to the source PNG
+Output goes to a sibling folder named `<basename>-icons` next to the source image
 (`<basename>-icons-android` / `<basename>-icons-ios` for the single-platform commands); in a
 batch, each source gets its own folder. If
 that folder already exists, `-2`, `-3`, … is appended instead (nothing is overwritten). The
@@ -165,7 +207,7 @@ stable.
       └─ values/ic_launcher_background.xml         <color name="ic_launcher_background"> (sampled)
 ```
 
-### How each layer is derived (from one flat PNG)
+### How each layer is derived (from one flat image)
 
 | Output | Treatment |
 | --- | --- |
@@ -178,7 +220,8 @@ stable.
 | Android `PlayStore-512.png` | The same 72dp framing at 512², opaque (Play requires a non-transparent icon and rounds the corners itself). |
 
 Both input shapes are handled and tested: **flat PNGs with transparency** (logo on a
-transparent background) and **fully-opaque full-bleed PNGs** (no alpha channel at all).
+transparent background) and **fully-opaque full-bleed images** (no alpha channel at all,
+which includes every JPG and HEIC).
 
 ### How the Android artwork is fitted
 
@@ -213,9 +256,11 @@ square filled edge to edge ends up at 46.7dp. The run prints the result, e.g.
 ```
 
 `install.ps1` creates per-user shell keys (no elevation needed). Both tools are cascading
-submenus. Each parent has only `MUIVerb` and an empty `SubCommands` value, and its entries
-live in its own `shell` subkey. Every key also carries `MultiSelectModel = Player` (see
-[Batch processing](#batch-processing)):
+submenus, registered identically for each supported extension (`.png`, `.jpg`, `.jpeg`,
+`.heic`, `.heif`). Each parent has only `MUIVerb` and an empty `SubCommands` value, and its
+entries live in its own `shell` subkey. Every key also carries `MultiSelectModel = Player`
+(see [Batch processing](#batch-processing)). Shown for `.png`; the other extensions get the
+same keys:
 
 ```
 HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons
@@ -237,9 +282,12 @@ The installer deletes and recreates both parent keys each time. A leftover `(def
 or `command` subkey from an older single-command install would otherwise turn a parent back
 into a plain verb. It also removes the direct `ResizeStoreScreenshot01`–`05` verbs that
 earlier versions registered. Re-run `install.ps1` after updating the project so Explorer
-receives the new entries.
+receives the new entries (an install from before JPG/HEIC support only covers `.png`).
 
-`uninstall.ps1` removes both the icon and screenshot commands.
+The commands are the same for every extension, and a batch is keyed on the menu entry, not
+the file type, so a selection that mixes PNG, JPG and HEIC files runs as one batch.
+
+`uninstall.ps1` removes both the icon and screenshot commands from every file type.
 
 ---
 
@@ -366,3 +414,38 @@ Bold sizes have a preset.
   (there's no silhouette to cut out), so the system tints the whole square. Supply a
   dedicated alpha silhouette if you want a specific themed shape.
 - The tool never overwrites: repeated runs create `-icons-2`, `-icons-3`, …
+
+---
+
+## Third-party software and licenses
+
+This repository contains only its own scripts and documentation, released under the MIT
+License (see [License](#license)). It does **not** include, bundle or modify any third-party
+code, library or data file. At run time the scripts call
+ImageMagick, which you install yourself, and read one color profile that ships with Windows.
+Those components stay under their own licenses:
+
+| Component | What this project uses it for | License |
+| --- | --- | --- |
+| [ImageMagick](https://imagemagick.org/) — © 1999 ImageMagick Studio LLC | Every read, conversion and resize (`magick`) | [ImageMagick License](https://imagemagick.org/license/) (derived from Apache 2.0) |
+| [libheif](https://github.com/strukturag/libheif) | HEIC/HEIF decoding, inside ImageMagick | [LGPL-3.0](https://github.com/strukturag/libheif/blob/master/COPYING) |
+| [libde265](https://github.com/strukturag/libde265) | HEVC decoding for libheif, inside ImageMagick | [LGPL-3.0](https://github.com/strukturag/libde265/blob/master/COPYING) |
+| [Little CMS](https://www.littlecms.com/) | Color-profile conversion to sRGB, inside ImageMagick | [MIT](https://github.com/mm2/Little-CMS/blob/master/LICENSE) |
+| [libjpeg-turbo](https://libjpeg-turbo.org/) | JPEG decoding, inside ImageMagick | [IJG License and BSD-3-Clause](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
+| [libpng](http://www.libpng.org/pub/png/libpng.html) | PNG reading and writing, inside ImageMagick | [PNG Reference Library License v2](http://www.libpng.org/pub/png/src/libpng-LICENSE.txt) |
+| Windows sRGB color profile (`sRGB Color Space Profile.icm`) | Target profile for the sRGB conversion; read in place, never copied | Part of Windows, under the Windows license terms |
+
+The libraries are the ones the official Windows build of ImageMagick compiles in, per
+ImageMagick's Windows dependency list:
+https://github.com/ImageMagick/Dependencies/blob/main/clone-dependencies.sh
+
+If you redistribute ImageMagick together with these scripts (for example in a packaged
+installer), that distribution must follow ImageMagick's license and those of the libraries
+it contains, including the LGPL-3.0 terms of libheif and libde265.
+
+---
+
+## License
+
+IconRightClick is released under the [MIT License](LICENSE), © 2026 fTr0ut. The
+third-party software listed above is not covered by it and keeps its own licenses.

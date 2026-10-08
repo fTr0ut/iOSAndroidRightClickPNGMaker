@@ -1,10 +1,12 @@
 <#
 .SYNOPSIS
-    Resize PNG screenshots for App Store Connect or Google Play Console.
+    Resize PNG, JPEG or HEIC screenshots for App Store Connect or Google Play
+    Console. Every output file is a PNG.
 
 .DESCRIPTION
-    Select one or more .png files in Windows Explorer, right-click and choose a
-    preset under "Resize Store Screenshot". Each source keeps its orientation,
+    Select one or more .png, .jpg/.jpeg or .heic/.heif files in Windows
+    Explorer, right-click and choose a preset under "Resize Store Screenshot".
+    Each source keeps its orientation (after its EXIF rotation is applied),
     is fitted without stretching, and gets white padding when its aspect ratio
     differs from the required canvas. Output is always an opaque 24-bit PNG,
     written beside its source.
@@ -12,8 +14,9 @@
     Requires ImageMagick ("magick"). Written for Windows PowerShell 5.1.
 
 .PARAMETER Path
-    One or more sources: .png files, folders (every .png directly inside,
-    except earlier output of this script) or wildcards.
+    One or more sources: .png, .jpg, .jpeg, .heic or .heif files, folders
+    (every such file directly inside, except earlier output of this script) or
+    wildcards.
 
 .PARAMETER Preset
     One or more store presets, named by their portrait size. Landscape
@@ -31,6 +34,9 @@
 
 .EXAMPLE
     .\Resize-StoreScreenshot.ps1 -Path "C:\art\shots" -Preset Apple-iPad-2064x2752, GooglePlay-Tablet-1440x2560
+
+.EXAMPLE
+    .\Resize-StoreScreenshot.ps1 -Path "C:\photos\IMG_0042.HEIC" -Preset Apple-iPhone-1206x2622
 #>
 [CmdletBinding()]
 param(
@@ -121,38 +127,17 @@ function Get-AvailableOutputPath {
     }
 }
 
-function Get-PngSize {
-    # Confirms the file is a real PNG and returns its dimensions.
-    param([System.IO.FileInfo] $Source)
-
-    if ($Source.Extension.ToLowerInvariant() -ne '.png') {
-        throw ("Source must be a .png file. Got: " + $Source.Extension)
-    }
-
-    $ident = & $script:Magick identify -format "%m %w %h\n" -- "$($Source.FullName)"
-    if ($LASTEXITCODE -ne 0) {
-        throw ("ImageMagick could not read the image: " + $Source.FullName)
-    }
-    if ($ident -is [array]) {
-        $ident = $ident[0]
-    }
-
-    $parts = @(($ident -split '\s+') | Where-Object { $_ -ne '' })
-    if ($parts.Count -lt 3 -or $parts[0] -notmatch 'PNG') {
-        throw ("File does not appear to be a real PNG: " + $Source.FullName)
-    }
-
-    return @{ Width = [int] $parts[1]; Height = [int] $parts[2] }
-}
-
 function Convert-Screenshot {
-    # Fits one source onto one preset's canvas, beside the source.
+    # Fits one source onto one preset's canvas, beside the source. $Info comes
+    # from Get-SourceImageInfo; its size is the upright one.
     param(
         [System.IO.FileInfo] $Source,
-        [int] $SourceWidth,
-        [int] $SourceHeight,
+        [hashtable] $Info,
         [string] $PresetName
     )
+
+    [int] $SourceWidth = $Info.Width
+    [int] $SourceHeight = $Info.Height
 
     $presetInfo = $PresetSizes[$PresetName]
     $orientation = 'portrait'
@@ -170,20 +155,17 @@ function Convert-Screenshot {
     $outputPath = Get-AvailableOutputPath -Directory $Source.DirectoryName -BaseName $baseName -Suffix $suffix
 
     # Fit inside the exact canvas instead of stretching. White padding is used
-    # only when the source and target aspect ratios differ.
-    Invoke-Magick @(
-        "$($Source.FullName)",
-        '-auto-orient',
+    # only when the source and target aspect ratios differ. ReadArgs loads the
+    # source upright, in sRGB and without metadata.
+    Invoke-Magick ($Info.ReadArgs + @(
         '-resize', $geometry,
         '-background', 'white',
         '-gravity', 'center',
         '-extent', $geometry,
         '-alpha', 'remove',
         '-alpha', 'off',
-        '-colorspace', 'sRGB',
-        '-strip',
         ('PNG24:' + $outputPath)
-    )
+    ))
 
     $outputSize = & $script:Magick identify -format "%w %h" -- "$outputPath"
     if ($LASTEXITCODE -ne 0 -or $outputSize -ne ($targetWidth.ToString() + ' ' + $targetHeight.ToString())) {
@@ -217,7 +199,7 @@ try {
 
     # A folder given as a source skips files this script wrote earlier.
     $labels = @($PresetSizes.Values | ForEach-Object { [regex]::Escape($_.Label) } | Sort-Object -Unique) -join '|'
-    $sources = Resolve-SourcePng -Path $Path -SkipPattern ('-(' + $labels + ')-\d+x\d+(-\d+)?\.png$')
+    $sources = Resolve-SourceImage -Path $Path -SkipPattern ('-(' + $labels + ')-\d+x\d+(-\d+)?\.png$')
 
     $failures = New-Object System.Collections.Generic.List[string]
     foreach ($err in $sources.Errors) {
@@ -229,7 +211,7 @@ try {
     }
 
     Write-Step ("Preset: " + ($Preset -join ', ') + " (orientation follows each source)")
-    Write-Step ("Sources: " + $total + " PNG file(s)")
+    Write-Step ("Sources: " + $total + " image(s)")
     foreach ($err in $sources.Errors) {
         Write-Host ("  Skipped: " + $err) -ForegroundColor Yellow
     }
@@ -241,15 +223,18 @@ try {
         $i = $i + 1
         Write-Host ("  [" + $i + "/" + $total + "] " + $src.FullName)
         try {
-            $size = Get-PngSize -Source $src
+            $info = Get-SourceImageInfo -Source $src
+            foreach ($note in $info.Notes) {
+                Write-Step ("    Source " + $note)
+            }
             foreach ($p in $Preset) {
-                $result = Convert-Screenshot -Source $src -SourceWidth $size.Width -SourceHeight $size.Height -PresetName $p
+                $result = Convert-Screenshot -Source $src -Info $info -PresetName $p
                 $written.Add($result.Output)
                 $fit = 'no padding needed'
                 if ($result.Padded) {
                     $fit = 'white padding added'
                 }
-                Write-Step ("    " + $size.Width + "x" + $size.Height + " " + $result.Orientation + " -> " +
+                Write-Step ("    " + $info.Width + "x" + $info.Height + " " + $result.Orientation + " -> " +
                     [System.IO.Path]::GetFileName($result.Output) + " (" + $fit + ")")
             }
         }
