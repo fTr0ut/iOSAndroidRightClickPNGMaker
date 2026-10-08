@@ -1,11 +1,13 @@
 <#
 .SYNOPSIS
-    Generate Android- and iOS-compliant app icon sets from a single source PNG.
+    Generate Android- and iOS-compliant app icon sets from a single source
+    image (PNG, JPEG or HEIC). Every output file is a PNG.
 
 .DESCRIPTION
-    Select one or more .png files in Windows Explorer, right-click ->
-    "Generate Mobile App Icons" and pick "Android + iOS", "Android only" or
-    "iOS only". Each source gets its own output folder.
+    Select one or more .png, .jpg/.jpeg or .heic/.heif files in Windows
+    Explorer, right-click -> "Generate Mobile App Icons" and pick
+    "Android + iOS", "Android only" or "iOS only". Each source gets its own
+    output folder.
     Produces an iOS AppIcon.appiconset (light / dark / tinted, 1024) and/or an
     Android res/ tree (legacy + round mipmaps, adaptive foreground + monochrome
     layers, adaptive-icon XML, background color, Play Store 512).
@@ -13,8 +15,8 @@
     Requires ImageMagick ("magick"). Written for Windows PowerShell 5.1.
 
 .PARAMETER Path
-    One or more sources: .png files, folders (every .png directly inside) or
-    wildcards.
+    One or more sources: .png, .jpg, .jpeg, .heic or .heif files, folders
+    (every such file directly inside) or wildcards.
 
 .PARAMETER Platform
     Which icon set to generate: All (default), Android or iOS.
@@ -32,6 +34,9 @@
 
 .EXAMPLE
     .\Make-MobileIcons.ps1 -Path "C:\art\logo.png", "C:\art\logo-beta.png" -Platform Android
+
+.EXAMPLE
+    .\Make-MobileIcons.ps1 -Path "C:\photos\IMG_0042.HEIC", "C:\art\badge.jpg" -Platform iOS
 #>
 [CmdletBinding()]
 param(
@@ -199,32 +204,20 @@ function Measure-Artwork {
 # --------------------------------------------------------------------------
 
 function New-MobileIconSet {
-    # Generates the icon set(s) for one source PNG into a new sibling folder
+    # Generates the icon set(s) for one source image into a new sibling folder
     # and returns that folder. Uses $doIos / $doAndroid from the main block.
     param([System.IO.FileInfo] $Source)
 
     # --- Validate input ---------------------------------------------------
+    # PNG, JPEG or HEIC; $w x $h is the upright size.
     $src = $Source
-    if ($src.Extension.ToLowerInvariant() -ne '.png') {
-        throw ("Source must be a .png file. Got: " + $src.Extension)
+    $info = Get-SourceImageInfo -Source $src
+    [int] $w = $info.Width
+    [int] $h = $info.Height
+    Write-Step ("Source: " + $src.Name + " (" + $info.Format + ", " + $w + "x" + $h + ")")
+    foreach ($note in $info.Notes) {
+        Write-Step ("Source " + $note)
     }
-
-    # Confirm ImageMagick agrees it is a PNG and read dimensions.
-    $ident = & $script:Magick identify -format "%m %w %h\n" -- "$($src.FullName)"
-    if ($LASTEXITCODE -ne 0) {
-        throw ("ImageMagick could not read the image: " + $src.FullName)
-    }
-    if ($ident -is [array]) {
-        $ident = $ident[0]
-    }
-    $parts = ($ident -split '\s+') | Where-Object { $_ -ne '' }
-    $fmt = $parts[0]
-    [int] $w = $parts[1]
-    [int] $h = $parts[2]
-    if ($fmt -notmatch 'PNG') {
-        throw ("File does not appear to be a real PNG (ImageMagick reports '" + $fmt + "').")
-    }
-    Write-Step ("Source: " + $src.Name + " (" + $w + "x" + $h + ")")
 
     # --- Choose a non-colliding output folder -----------------------------
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($src.Name)
@@ -255,17 +248,18 @@ function New-MobileIconSet {
     New-Item -ItemType Directory -Path $workDir -Force | Out-Null
 
     # --- Build a square, alpha-preserved master ---------------------------
+    # Every later step reads this PNG, so JPEG and HEIC need no special cases.
     $wasPadded = $false
     $masterMax = [Math]::Max($w, $h)
     $masterPath = Join-Path $workDir "master_square.png"
     if ($w -eq $h) {
-        Invoke-Magick @("$($src.FullName)", ('PNG32:' + $masterPath))
+        Invoke-Magick ($info.ReadArgs + @(('PNG32:' + $masterPath)))
     }
     else {
         $wasPadded = $true
         # Center the source on a transparent square canvas.
-        Invoke-Magick @("$($src.FullName)", '-background', 'none', '-gravity', 'center',
-            '-extent', ($masterMax.ToString() + 'x' + $masterMax.ToString()), ('PNG32:' + $masterPath))
+        Invoke-Magick ($info.ReadArgs + @('-background', 'none', '-gravity', 'center',
+            '-extent', ($masterMax.ToString() + 'x' + $masterMax.ToString()), ('PNG32:' + $masterPath)))
         Write-Step ("Image was not square (" + $w + "x" + $h + ") -> padded to " + $masterMax + "x" + $masterMax + " with transparency.")
     }
 
@@ -567,7 +561,7 @@ try {
     Write-Step ("Using ImageMagick: " + $script:Magick)
     Write-Step ("Platform: " + $Platform)
 
-    $sources = Resolve-SourcePng -Path $Path
+    $sources = Resolve-SourceImage -Path $Path
     $failures = New-Object System.Collections.Generic.List[string]
     foreach ($err in $sources.Errors) {
         $failures.Add($err)

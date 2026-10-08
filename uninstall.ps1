@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Remove the IconRightClick tools from the .png right-click menu.
+    Remove the IconRightClick tools from the right-click menu of every file
+    type they were installed for (.png, .jpg/.jpeg, .heic/.heif).
 #>
 [CmdletBinding()]
 param()
@@ -8,15 +9,21 @@ param()
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$keys = @(
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot01',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot02',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot03',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot04',
-    'HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot05'
-)
+$assocRoot = 'HKCU:\Software\Classes\SystemFileAssociations'
+
+# Both submenus, under whichever file types carry them.
+$keys = New-Object System.Collections.Generic.List[string]
+if (Test-Path -LiteralPath $assocRoot) {
+    foreach ($assoc in @(Get-ChildItem -LiteralPath $assocRoot)) {
+        foreach ($name in @('MakeMobileIcons', 'ResizeStoreScreenshot')) {
+            $keys.Add($assocRoot + '\' + $assoc.PSChildName + '\shell\' + $name)
+        }
+    }
+}
+# Direct .png verbs registered by an earlier version.
+foreach ($n in 1..5) {
+    $keys.Add($assocRoot + '\.png\shell\ResizeStoreScreenshot0' + $n)
+}
 
 $removed = 0
 foreach ($key in $keys) {

@@ -1,14 +1,15 @@
 <#
 .SYNOPSIS
-    Add mobile-store image tools to the .png right-click menu (per-user, no admin).
+    Add mobile-store image tools to the right-click menu of .png, .jpg/.jpeg
+    and .heic/.heif files (per-user, no admin).
 
 .DESCRIPTION
     Registers classic shell verbs under HKCU so it needs no administrator rights.
     On Windows 11 they appear in the "Show more options" (Shift+F10) menu.
     Adds two submenus: the icon generator (Android + iOS, Android only, iOS only)
     and App Store Connect / Google Play Console screenshot presets. Every entry
-    works on a selection of up to 100 PNGs, processed together in one window.
-    Run uninstall.ps1 to remove them.
+    works on a selection of up to 100 images, processed together in one window;
+    the output is always PNG. Run uninstall.ps1 to remove them.
 #>
 [CmdletBinding()]
 param()
@@ -27,10 +28,13 @@ foreach ($required in @($target, $resizeTarget, (Join-Path $scriptDir 'BatchSupp
     }
 }
 
+# $SourceImageExtensions: the file types the scripts accept.
+. (Join-Path $scriptDir 'BatchSupport.ps1')
+
 $psExe = (Get-Command powershell.exe).Source
 $iconValue = $psExe + ',0'
 
-$pngShellRoot = 'HKCU:\Software\Classes\SystemFileAssociations\.png\shell'
+$assocRoot = 'HKCU:\Software\Classes\SystemFileAssociations'
 
 function Register-CascadeMenu {
     # The parent carries only MUIVerb + an empty SubCommands value; its entries
@@ -51,7 +55,8 @@ function Register-CascadeMenu {
     if (Test-Path -LiteralPath $Key) {
         Remove-Item -LiteralPath $Key -Recurse -Force
     }
-    New-Item -Path $Key | Out-Null
+    # -Force creates missing parents, e.g. SystemFileAssociations\.heic\shell.
+    New-Item -Path $Key -Force | Out-Null
     New-ItemProperty -Path $Key -Name 'MUIVerb' -Value $Label -PropertyType String | Out-Null
     New-ItemProperty -Path $Key -Name 'SubCommands' -Value '' -PropertyType String | Out-Null
     New-ItemProperty -Path $Key -Name 'Icon' -Value $script:iconValue -PropertyType String | Out-Null
@@ -86,7 +91,6 @@ $iconCommands = @(
 foreach ($item in $iconCommands) {
     $item.Command = New-VerbCommand -Script $target -Arguments ('-Platform ' + $item.Platform)
 }
-Register-CascadeMenu -Key (Join-Path $pngShellRoot 'MakeMobileIcons') -Label 'Generate Mobile App Icons' -Items $iconCommands
 
 # --- Resize Store Screenshot > ---------------------------------------------
 # Labels name the portrait size; a landscape source gets the reversed size.
@@ -104,14 +108,21 @@ foreach ($item in $resizeCommands) {
     $item.Command = New-VerbCommand -Script $resizeTarget -Arguments ('-Preset ' + $item.Preset)
 }
 
-# The previous install registered each preset as a direct verb.
+# An earlier install registered each preset as a direct .png verb.
 foreach ($n in 1..5) {
-    $oldVerbKey = Join-Path $pngShellRoot ('ResizeStoreScreenshot0' + $n)
+    $oldVerbKey = $assocRoot + '\.png\shell\ResizeStoreScreenshot0' + $n
     if (Test-Path -LiteralPath $oldVerbKey) {
         Remove-Item -LiteralPath $oldVerbKey -Recurse -Force
     }
 }
-Register-CascadeMenu -Key (Join-Path $pngShellRoot 'ResizeStoreScreenshot') -Label 'Resize Store Screenshot' -Items $resizeCommands
+
+# The same verbs and commands for every file type. A batch is keyed on the
+# script and its mode, so a selection that mixes types still runs as one batch.
+foreach ($ext in $SourceImageExtensions) {
+    $shellRoot = $assocRoot + '\' + $ext + '\shell'
+    Register-CascadeMenu -Key ($shellRoot + '\MakeMobileIcons') -Label 'Generate Mobile App Icons' -Items $iconCommands
+    Register-CascadeMenu -Key ($shellRoot + '\ResizeStoreScreenshot') -Label 'Resize Store Screenshot' -Items $resizeCommands
+}
 
 # Tell Explorer to discard cached file-association data so the new verbs are
 # available immediately without restarting explorer.exe.
@@ -141,7 +152,7 @@ namespace IconRightClick
 }
 [IconRightClick.ShellChangeNotifier]::NotifyAssociationChanged()
 
-Write-Host "Installed context-menu tools for .png files:"
+Write-Host ("Installed context-menu tools for " + ($SourceImageExtensions -join ', ') + " files:")
 Write-Host "  Generate Mobile App Icons >"
 foreach ($item in $iconCommands) {
     Write-Host ("      " + $item.Label)
@@ -151,6 +162,7 @@ foreach ($item in $resizeCommands) {
     Write-Host ("      " + $item.Label)
 }
 Write-Host ""
-Write-Host "Select one PNG or up to 100 and they are processed together in one window."
+Write-Host "Select one image or up to 100 and they are processed together in one window."
+Write-Host "Every output file is a PNG."
 Write-Host "On Windows 11, right-click and choose 'Show more options'"
 Write-Host "(or press Shift+F10) to see the installed tools."
