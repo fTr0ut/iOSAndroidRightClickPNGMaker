@@ -3,8 +3,9 @@
     Generate Android- and iOS-compliant app icon sets from a single source PNG.
 
 .DESCRIPTION
-    Right-click a .png in Windows Explorer -> "Generate Mobile App Icons" and pick
-    "Android + iOS", "Android only" or "iOS only".
+    Select one or more .png files in Windows Explorer, right-click ->
+    "Generate Mobile App Icons" and pick "Android + iOS", "Android only" or
+    "iOS only". Each source gets its own output folder.
     Produces an iOS AppIcon.appiconset (light / dark / tinted, 1024) and/or an
     Android res/ tree (legacy + round mipmaps, adaptive foreground + monochrome
     layers, adaptive-icon XML, background color, Play Store 512).
@@ -12,7 +13,8 @@
     Requires ImageMagick ("magick"). Written for Windows PowerShell 5.1.
 
 .PARAMETER Path
-    Path to the source .png image.
+    One or more sources: .png files, folders (every .png directly inside) or
+    wildcards.
 
 .PARAMETER Platform
     Which icon set to generate: All (default), Android or iOS.
@@ -21,25 +23,33 @@
     Suppress Explorer and the end-of-run "Press Enter to close" prompt (used for
     automation/testing).
 
+.PARAMETER FromExplorer
+    Set by the context menu. Explorer starts one process per selected file;
+    this merges them into a single run in one window.
+
 .EXAMPLE
     .\Make-MobileIcons.ps1 -Path "C:\art\logo.png"
 
 .EXAMPLE
-    .\Make-MobileIcons.ps1 -Path "C:\art\logo.png" -Platform Android
+    .\Make-MobileIcons.ps1 -Path "C:\art\logo.png", "C:\art\logo-beta.png" -Platform Android
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string] $Path,
+    [string[]] $Path,
 
     [ValidateSet('All', 'Android', 'iOS')]
     [string] $Platform = 'All',
 
-    [switch] $NoInteractive
+    [switch] $NoInteractive,
+
+    [switch] $FromExplorer
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'BatchSupport.ps1')
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -185,30 +195,16 @@ function Measure-Artwork {
 }
 
 # --------------------------------------------------------------------------
-# Main
+# One source -> one icon set
 # --------------------------------------------------------------------------
 
-$workDir = $null
-try {
-    $doIos = ($Platform -eq 'All' -or $Platform -eq 'iOS')
-    $doAndroid = ($Platform -eq 'All' -or $Platform -eq 'Android')
-
-    Write-Host ""
-    Write-Host "Generate Mobile App Icons"
-    Write-Host "========================="
-
-    $script:Magick = Resolve-Magick
-    Write-Step ("Using ImageMagick: " + $script:Magick)
+function New-MobileIconSet {
+    # Generates the icon set(s) for one source PNG into a new sibling folder
+    # and returns that folder. Uses $doIos / $doAndroid from the main block.
+    param([System.IO.FileInfo] $Source)
 
     # --- Validate input ---------------------------------------------------
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        throw "No -Path was supplied."
-    }
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw ("Source file does not exist: " + $Path)
-    }
-
-    $src = Get-Item -LiteralPath $Path
+    $src = $Source
     if ($src.Extension.ToLowerInvariant() -ne '.png') {
         throw ("Source must be a .png file. Got: " + $src.Extension)
     }
@@ -229,7 +225,6 @@ try {
         throw ("File does not appear to be a real PNG (ImageMagick reports '" + $fmt + "').")
     }
     Write-Step ("Source: " + $src.Name + " (" + $w + "x" + $h + ")")
-    Write-Step ("Platform: " + $Platform)
 
     # --- Choose a non-colliding output folder -----------------------------
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($src.Name)
@@ -253,8 +248,10 @@ try {
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     Write-Step ("Output folder: " + $outDir)
 
-    # Scratch files live here and are deleted at the end.
+    # Scratch files live here and are deleted at the end (by the caller if
+    # this throws).
     $workDir = Join-Path $outDir '_work'
+    $script:WorkDir = $workDir
     New-Item -ItemType Directory -Path $workDir -Force | Out-Null
 
     # --- Build a square, alpha-preserved master ---------------------------
@@ -526,14 +523,10 @@ try {
 
     # --- Clean up scratch files -------------------------------------------
     Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    $script:WorkDir = $null
 
-    # ======================================================================
-    # Summary
-    # ======================================================================
+    # --- Per-source summary -----------------------------------------------
     Write-Host ""
-    Write-Host "Done."
-    Write-Host "-----"
-    Write-Host ("Source           : " + $src.FullName)
     if ($wasPadded) {
         Write-Host ("Squared          : padded from " + $w + "x" + $h + " to " + $masterMax + "x" + $masterMax + " (transparent)")
     }
@@ -544,12 +537,86 @@ try {
         Write-Host ("Background color : " + $bgHex)
     }
     Write-Host ("Output folder    : " + $outDir)
+
+    return $outDir
+}
+
+# --------------------------------------------------------------------------
+# Main
+# --------------------------------------------------------------------------
+
+$script:WorkDir = $null
+try {
+    $doIos = ($Platform -eq 'All' -or $Platform -eq 'iOS')
+    $doAndroid = ($Platform -eq 'All' -or $Platform -eq 'Android')
+
     Write-Host ""
+    Write-Host "Generate Mobile App Icons"
+    Write-Host "========================="
+
+    if ($FromExplorer) {
+        $selection = Merge-ExplorerSelection -Path $Path[0] -ScriptName 'Make-MobileIcons.ps1' -Mode ('-Platform ' + $Platform)
+        if ($null -eq $selection) {
+            Write-Step "Added to the batch that another window is collecting."
+            exit 0
+        }
+        $Path = $selection
+    }
+
+    $script:Magick = Resolve-Magick
+    Write-Step ("Using ImageMagick: " + $script:Magick)
+    Write-Step ("Platform: " + $Platform)
+
+    $sources = Resolve-SourcePng -Path $Path
+    $failures = New-Object System.Collections.Generic.List[string]
+    foreach ($err in $sources.Errors) {
+        $failures.Add($err)
+        Write-Host ("  Skipped: " + $err) -ForegroundColor Yellow
+    }
+    $total = $sources.Files.Count
+    if ($total -eq 0) {
+        throw ("Nothing to generate. " + ($failures -join ' '))
+    }
+
+    $outDirs = New-Object System.Collections.Generic.List[string]
+    $i = 0
+    foreach ($src in $sources.Files) {
+        $i = $i + 1
+        Write-Host ""
+        Write-Host ("[" + $i + "/" + $total + "] " + $src.FullName)
+        try {
+            $outDirs.Add((New-MobileIconSet -Source $src))
+        }
+        catch {
+            if ($script:WorkDir) {
+                Remove-Item -LiteralPath $script:WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+                $script:WorkDir = $null
+            }
+            $failures.Add($src.Name + ": " + $_.Exception.Message)
+            Write-Host ("  FAILED: " + $_.Exception.Message) -ForegroundColor Red
+        }
+    }
+
+    # ======================================================================
+    # Summary
+    # ======================================================================
+    Write-Host ""
+    Write-Host "Done."
+    Write-Host "-----"
+    if ($total -gt 1) {
+        Write-Host ("Icon sets : " + $outDirs.Count + " of " + $total + " generated, each in a folder beside its source")
+    }
     if ($doIos) {
-        Write-Host "iOS     : AppIcon.appiconset (light/dark/tinted 1024) + AppStore-1024.png"
+        Write-Host "iOS       : AppIcon.appiconset (light/dark/tinted 1024) + AppStore-1024.png"
     }
     if ($doAndroid) {
-        Write-Host "Android : res/ (legacy + round mipmaps, adaptive foreground+monochrome, XML) + PlayStore-512.png"
+        Write-Host "Android   : res/ (legacy + round mipmaps, adaptive foreground+monochrome, XML) + PlayStore-512.png"
+    }
+    if ($failures.Count -gt 0) {
+        Write-Host ("Failed    : " + $failures.Count) -ForegroundColor Red
+        foreach ($f in $failures) {
+            Write-Host ("  " + $f) -ForegroundColor Red
+        }
     }
     if ($doIos) {
         Write-Host ""
@@ -558,15 +625,24 @@ try {
     }
 
     if (-not $NoInteractive) {
-        # Open the output folder for the user (context-menu runs).
-        Start-Process explorer.exe -ArgumentList ('"' + $outDir + '"')
+        # Show the output (context-menu runs): the folder itself for one
+        # source, or the parent folder with the first set selected for several.
+        if ($outDirs.Count -eq 1) {
+            Start-Process explorer.exe -ArgumentList ('"' + $outDirs[0] + '"')
+        }
+        elseif ($outDirs.Count -gt 1) {
+            Start-Process explorer.exe -ArgumentList ('/select,"' + $outDirs[0] + '"')
+        }
         Write-Host ""
         Read-Host "Press Enter to close"
     }
+    if ($failures.Count -gt 0) {
+        exit 1
+    }
 }
 catch {
-    if ($workDir) {
-        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($script:WorkDir) {
+        Remove-Item -LiteralPath $script:WorkDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     Write-Host ""
     Write-Host "ERROR:" -ForegroundColor Red

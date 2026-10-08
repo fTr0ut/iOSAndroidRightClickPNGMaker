@@ -3,10 +3,11 @@
     Add mobile-store image tools to the .png right-click menu (per-user, no admin).
 
 .DESCRIPTION
-    Registers a classic shell verb under HKCU so it needs no administrator rights.
-    On Windows 11 this appears in the "Show more options" (Shift+F10) menu.
-    Adds the icon generator (a submenu: Android + iOS, Android only, iOS only)
-    plus direct App Store Connect and Google Play Console screenshot presets.
+    Registers classic shell verbs under HKCU so it needs no administrator rights.
+    On Windows 11 they appear in the "Show more options" (Shift+F10) menu.
+    Adds two submenus: the icon generator (Android + iOS, Android only, iOS only)
+    and App Store Connect / Google Play Console screenshot presets. Every entry
+    works on a selection of up to 100 PNGs, processed together in one window.
     Run uninstall.ps1 to remove them.
 #>
 [CmdletBinding()]
@@ -20,81 +21,97 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $target = Join-Path $scriptDir 'Make-MobileIcons.ps1'
 $resizeTarget = Join-Path $scriptDir 'Resize-StoreScreenshot.ps1'
 
-if (-not (Test-Path -LiteralPath $target)) {
-    throw ("Cannot find Make-MobileIcons.ps1 next to this installer: " + $target)
-}
-if (-not (Test-Path -LiteralPath $resizeTarget)) {
-    throw ("Cannot find Resize-StoreScreenshot.ps1 next to this installer: " + $resizeTarget)
+foreach ($required in @($target, $resizeTarget, (Join-Path $scriptDir 'BatchSupport.ps1'))) {
+    if (-not (Test-Path -LiteralPath $required)) {
+        throw ("Cannot find " + (Split-Path -Leaf $required) + " next to this installer: " + $required)
+    }
 }
 
 $psExe = (Get-Command powershell.exe).Source
 $iconValue = $psExe + ',0'
 
 $pngShellRoot = 'HKCU:\Software\Classes\SystemFileAssociations\.png\shell'
-$key = Join-Path $pngShellRoot 'MakeMobileIcons'
 
-# "Generate Mobile App Icons" is a cascading submenu. The parent carries only
-# MUIVerb + an empty SubCommands value; its children live in its own "shell"
-# subkey. Start from a clean key: a leftover (default) value or "command"
-# subkey from the earlier single-verb install would turn it back into a plain
-# verb on some Explorer builds.
+function Register-CascadeMenu {
+    # The parent carries only MUIVerb + an empty SubCommands value; its entries
+    # live in its own "shell" subkey. Start from a clean key: a leftover
+    # (default) value or "command" subkey from an earlier single-verb install
+    # would turn it back into a plain verb on some Explorer builds.
+    #
+    # Command-line verbs default to MultiSelectModel=Document, which Explorer
+    # hides once more than 15 files are selected. Player raises that to 100.
+    # Explorer still starts one process per selected file; -FromExplorer makes
+    # the scripts merge them into a single run.
+    param(
+        [string] $Key,
+        [string] $Label,
+        [object[]] $Items
+    )
+
+    if (Test-Path -LiteralPath $Key) {
+        Remove-Item -LiteralPath $Key -Recurse -Force
+    }
+    New-Item -Path $Key | Out-Null
+    New-ItemProperty -Path $Key -Name 'MUIVerb' -Value $Label -PropertyType String | Out-Null
+    New-ItemProperty -Path $Key -Name 'SubCommands' -Value '' -PropertyType String | Out-Null
+    New-ItemProperty -Path $Key -Name 'Icon' -Value $script:iconValue -PropertyType String | Out-Null
+    New-ItemProperty -Path $Key -Name 'MultiSelectModel' -Value 'Player' -PropertyType String | Out-Null
+
+    foreach ($item in $Items) {
+        $subKey = $Key + '\shell\' + $item.Id
+        $subCommandKey = $subKey + '\command'
+
+        New-Item -Path $subKey -Force | Out-Null
+        Set-ItemProperty -Path $subKey -Name '(default)' -Value $item.Label
+        Set-ItemProperty -Path $subKey -Name 'MUIVerb' -Value $item.Label
+        Set-ItemProperty -Path $subKey -Name 'Icon' -Value $script:iconValue
+        Set-ItemProperty -Path $subKey -Name 'MultiSelectModel' -Value 'Player'
+
+        New-Item -Path $subCommandKey -Force | Out-Null
+        Set-ItemProperty -Path $subCommandKey -Name '(default)' -Value $item.Command
+    }
+}
+
+function New-VerbCommand {
+    param([string] $Script, [string] $Arguments)
+    return ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $Script + '" -Path "%1" ' + $Arguments + ' -FromExplorer')
+}
+
+# --- Generate Mobile App Icons > -------------------------------------------
 $iconCommands = @(
     @{ Id = '01All';     Label = 'Android + iOS'; Platform = 'All' },
     @{ Id = '02Android'; Label = 'Android only';  Platform = 'Android' },
     @{ Id = '03iOS';     Label = 'iOS only';      Platform = 'iOS' }
 )
-
-if (Test-Path -LiteralPath $key) {
-    Remove-Item -LiteralPath $key -Recurse -Force
-}
-New-Item -Path $key | Out-Null
-New-ItemProperty -Path $key -Name 'MUIVerb' -Value 'Generate Mobile App Icons' -PropertyType String | Out-Null
-New-ItemProperty -Path $key -Name 'SubCommands' -Value '' -PropertyType String | Out-Null
-New-ItemProperty -Path $key -Name 'Icon' -Value $iconValue -PropertyType String | Out-Null
-
 foreach ($item in $iconCommands) {
-    $subKey = $key + '\shell\' + $item.Id
-    $subCommandKey = $subKey + '\command'
-    $iconCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $target + '" -Path "%1" -Platform ' + $item.Platform
-
-    New-Item -Path $subKey -Force | Out-Null
-    Set-ItemProperty -Path $subKey -Name '(default)' -Value $item.Label
-    Set-ItemProperty -Path $subKey -Name 'MUIVerb' -Value $item.Label
-    Set-ItemProperty -Path $subKey -Name 'Icon' -Value $iconValue
-
-    New-Item -Path $subCommandKey -Force | Out-Null
-    Set-ItemProperty -Path $subCommandKey -Name '(default)' -Value $iconCommand
+    $item.Command = New-VerbCommand -Script $target -Arguments ('-Platform ' + $item.Platform)
 }
+Register-CascadeMenu -Key (Join-Path $pngShellRoot 'MakeMobileIcons') -Label 'Generate Mobile App Icons' -Items $iconCommands
 
-# Register each resize preset as a direct verb. This uses the same broadly
-# compatible shell layout as the existing icon generator.
+# --- Resize Store Screenshot > ---------------------------------------------
+# Labels name the portrait size; a landscape source gets the reversed size.
 $resizeCommands = @(
-    @{ Id = 'ResizeStoreScreenshot01'; Label = 'Resize Screenshot - Apple iPhone - 1242 x 2688'; Preset = 'Apple-iPhone-1242x2688' },
-    @{ Id = 'ResizeStoreScreenshot02'; Label = 'Resize Screenshot - Apple iPhone - 1284 x 2778'; Preset = 'Apple-iPhone-1284x2778' },
-    @{ Id = 'ResizeStoreScreenshot03'; Label = 'Resize Screenshot - Apple iPad - 2064 x 2752'; Preset = 'Apple-iPad-2064x2752' },
-    @{ Id = 'ResizeStoreScreenshot04'; Label = 'Resize Screenshot - Apple iPad - 2048 x 2732'; Preset = 'Apple-iPad-2048x2732' },
-    @{ Id = 'ResizeStoreScreenshot05'; Label = 'Resize Screenshot - Google Play - 1080 x 1920'; Preset = 'GooglePlay-1080x1920' }
+    @{ Id = '01'; Label = 'Apple iPhone 6.9" - 1320 x 2868';               Preset = 'Apple-iPhone-1320x2868' },
+    @{ Id = '02'; Label = 'Apple iPhone 6.3" - 1206 x 2622';               Preset = 'Apple-iPhone-1206x2622' },
+    @{ Id = '03'; Label = 'Apple iPhone 6.5" - 1284 x 2778';               Preset = 'Apple-iPhone-1284x2778' },
+    @{ Id = '04'; Label = 'Apple iPhone 6.5" - 1242 x 2688';               Preset = 'Apple-iPhone-1242x2688' },
+    @{ Id = '05'; Label = 'Apple iPad 13" - 2064 x 2752';                  Preset = 'Apple-iPad-2064x2752' },
+    @{ Id = '06'; Label = 'Apple iPad 13" - 2048 x 2732';                  Preset = 'Apple-iPad-2048x2732' },
+    @{ Id = '07'; Label = 'Google Play phone - 1080 x 1920';               Preset = 'GooglePlay-1080x1920' },
+    @{ Id = '08'; Label = 'Google Play tablet (7" and 10") - 1440 x 2560'; Preset = 'GooglePlay-Tablet-1440x2560' }
 )
-
-# Remove the earlier cascading-menu registration, which is not interpreted
-# consistently by every Windows Explorer build.
-$oldCascadeKey = Join-Path $pngShellRoot 'ResizeStoreScreenshot'
-if (Test-Path -LiteralPath $oldCascadeKey) {
-    Remove-Item -LiteralPath $oldCascadeKey -Recurse -Force
-}
-
 foreach ($item in $resizeCommands) {
-    $verbKey = Join-Path $pngShellRoot $item.Id
-    $verbCommandKey = $verbKey + '\command'
-    $resizeCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $resizeTarget + '" -Path "%1" -Preset ' + $item.Preset
-
-    New-Item -Path $verbKey -Force | Out-Null
-    Set-ItemProperty -Path $verbKey -Name '(default)' -Value $item.Label
-    Set-ItemProperty -Path $verbKey -Name 'Icon' -Value $iconValue
-
-    New-Item -Path $verbCommandKey -Force | Out-Null
-    Set-ItemProperty -Path $verbCommandKey -Name '(default)' -Value $resizeCommand
+    $item.Command = New-VerbCommand -Script $resizeTarget -Arguments ('-Preset ' + $item.Preset)
 }
+
+# The previous install registered each preset as a direct verb.
+foreach ($n in 1..5) {
+    $oldVerbKey = Join-Path $pngShellRoot ('ResizeStoreScreenshot0' + $n)
+    if (Test-Path -LiteralPath $oldVerbKey) {
+        Remove-Item -LiteralPath $oldVerbKey -Recurse -Force
+    }
+}
+Register-CascadeMenu -Key (Join-Path $pngShellRoot 'ResizeStoreScreenshot') -Label 'Resize Store Screenshot' -Items $resizeCommands
 
 # Tell Explorer to discard cached file-association data so the new verbs are
 # available immediately without restarting explorer.exe.
@@ -129,9 +146,11 @@ Write-Host "  Generate Mobile App Icons >"
 foreach ($item in $iconCommands) {
     Write-Host ("      " + $item.Label)
 }
+Write-Host "  Resize Store Screenshot >   (orientation follows each source)"
 foreach ($item in $resizeCommands) {
-    Write-Host ("  " + $item.Label + " (orientation follows source)")
+    Write-Host ("      " + $item.Label)
 }
 Write-Host ""
-Write-Host "On Windows 11, right-click a .png and choose 'Show more options'"
+Write-Host "Select one PNG or up to 100 and they are processed together in one window."
+Write-Host "On Windows 11, right-click and choose 'Show more options'"
 Write-Host "(or press Shift+F10) to see the installed tools."

@@ -1,8 +1,9 @@
 # IconRightClick — Prepare Mobile Store Images from a PNG
 
 Right-click any `.png` in Windows Explorer and generate **Android-** and **iOS-compliant**
-app icon sets or resize screenshots for **App Store Connect** and **Google Play Console**,
-following current (2026) Google and Apple guidance.
+app icon sets or resize screenshots for **App Store Connect** and **Google Play Console**
+(phones and tablets), following current (2026) Google and Apple guidance. Select one PNG or
+a whole batch: every selected file is processed in a single run.
 
 The tool works from a **single flat PNG** — an exported logo or a full-bleed image.
 You do **not** need layered artwork or separate foreground/background files. Everything
@@ -29,13 +30,16 @@ for this tool.
 
 ### From the right-click menu (after installing — see below)
 
-1. Right-click a `.png` file in Explorer.
+1. Select one or more `.png` files in Explorer (up to 100) and right-click.
 2. On **Windows 11**, click **"Show more options"** (or press **Shift+F10**) to open the
    classic context menu.
 3. Choose **"Generate Mobile App Icons"** and pick **Android + iOS**, **Android only**
-   or **iOS only** from its submenu, or choose one of the **"Resize Screenshot - ..."**
-   commands.
-4. A console window shows progress, then Explorer opens to the output.
+   or **iOS only**, or choose **"Resize Store Screenshot"** and pick a store size.
+4. One console window shows progress for the whole selection, then Explorer opens to the
+   output.
+
+With several files selected, a console window briefly opens and closes for each extra file
+before the batch starts in the first one (see [Batch processing](#batch-processing)).
 
 > **Windows 11 caveat (by design):** this entry appears in the **classic** ("Show more
 > options" / Shift+F10) menu, **not** the new compact Windows 11 menu. Adding items to the
@@ -47,48 +51,87 @@ for this tool.
 
 ```powershell
 .\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png"
-.\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png" -Platform Android   # or iOS
+.\Make-MobileIcons.ps1 -Path "C:\path\to\logo.png", "C:\path\to\logo-beta.png" -Platform Android   # or iOS
 
-# Screenshot orientation follows the source automatically.
-.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset Apple-iPhone-1284x2778
-.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset GooglePlay-1080x1920
+# Screenshot orientation follows each source automatically.
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\screenshot.png" -Preset Apple-iPhone-1320x2868
+
+# A batch: every .png in a folder, written at two sizes each.
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\tablet-shots" -Preset Apple-iPad-2064x2752, GooglePlay-Tablet-1440x2560
+
+# Wildcards work too.
+.\Resize-StoreScreenshot.ps1 -Path "C:\path\to\shots\home-*.png" -Preset GooglePlay-1080x1920
 ```
 
-- Both scripts require `-Path <string>` and support `-NoInteractive` for automation
-  (no Explorer window, no "Press Enter" prompt).
+- Both scripts take `-Path` with one or more entries. Each entry can be a `.png` file, a
+  folder (every `.png` directly inside it) or a wildcard. When a folder is given,
+  `Resize-StoreScreenshot.ps1` skips files it wrote on an earlier run.
+- Both support `-NoInteractive` for automation (no Explorer window, no "Press Enter"
+  prompt).
 - `Make-MobileIcons.ps1` takes an optional `-Platform All|Android|iOS` (default `All`).
-- `Resize-StoreScreenshot.ps1` also requires one of the documented `-Preset` values.
+- `Resize-StoreScreenshot.ps1` also requires one or more of the documented `-Preset` values.
+- A file that fails (e.g. not a real PNG) is reported, and the rest of the batch still
+  runs. The exit code is `1` if anything failed.
+
+### Batch processing
+
+For a command-line menu entry, Explorer starts **one process per selected file**. Each
+process would otherwise open its own window, Explorer view and "Press Enter" prompt. By
+default Explorer also hides such entries entirely once more than 15 files are selected.
+
+The installer registers every entry with `MultiSelectModel = Player`, which raises
+Explorer's limit to **100 files**, and adds `-FromExplorer` to the command line. With that
+switch, the first process to start collects the paths of all the others. They hand over
+their file and exit, and the batch runs in that one window. Different menu entries never
+share a batch. A new selection started while an earlier batch is still running gets its own
+window.
+
+For more than 100 files, run either script from the command line with a folder or wildcard
+as `-Path`.
 
 ---
 
 ## Screenshot resize presets
 
-The classic right-click menu provides these resize commands. Each label shows its portrait
-canvas; a landscape source automatically receives the reversed dimensions.
+The **"Resize Store Screenshot"** submenu provides these presets. Each label shows its
+portrait canvas; a landscape source automatically receives the reversed dimensions.
 
-| Menu preset | Portrait output | Landscape output |
-| --- | ---: | ---: |
-| Apple iPhone — 1242 x 2688 | 1242 x 2688 | 2688 x 1242 |
-| Apple iPhone — 1284 x 2778 | 1284 x 2778 | 2778 x 1284 |
-| Apple iPad — 2064 x 2752 | 2064 x 2752 | 2752 x 2064 |
-| Apple iPad — 2048 x 2732 | 2048 x 2732 | 2732 x 2048 |
-| Google Play — 1080 x 1920 | 1080 x 1920 | 1920 x 1080 |
+| Menu entry | `-Preset` | Portrait output | Landscape output | Store slot |
+| --- | --- | ---: | ---: | --- |
+| Apple iPhone 6.9" — 1320 x 2868 | `Apple-iPhone-1320x2868` | 1320 x 2868 | 2868 x 1320 | iPhone with Dynamic Island (large display) |
+| Apple iPhone 6.3" — 1206 x 2622 | `Apple-iPhone-1206x2622` | 1206 x 2622 | 2622 x 1206 | iPhone with Dynamic Island (medium display) |
+| Apple iPhone 6.5" — 1284 x 2778 | `Apple-iPhone-1284x2778` | 1284 x 2778 | 2778 x 1284 | iPhone with Face ID (large display) |
+| Apple iPhone 6.5" — 1242 x 2688 | `Apple-iPhone-1242x2688` | 1242 x 2688 | 2688 x 1242 | iPhone with Face ID (large display) |
+| Apple iPad 13" — 2064 x 2752 | `Apple-iPad-2064x2752` | 2064 x 2752 | 2752 x 2064 | iPad 13" display |
+| Apple iPad 13" — 2048 x 2732 | `Apple-iPad-2048x2732` | 2048 x 2732 | 2732 x 2048 | iPad 13" display |
+| Google Play phone — 1080 x 1920 | `GooglePlay-1080x1920` | 1080 x 1920 | 1920 x 1080 | Phone |
+| Google Play tablet (7" and 10") — 1440 x 2560 | `GooglePlay-Tablet-1440x2560` | 1440 x 2560 | 2560 x 1440 | 7-inch and 10-inch tablet |
 
-The result is written beside the source as an opaque 24-bit PNG. The source aspect ratio
-is preserved—there is no stretching. If it does not match the target canvas, the script
-centers it and adds white padding. Existing files are never overwritten; later runs add
-`-2`, `-3`, and so on.
+Which to use:
 
-The Google Play preset uses Google's current recommendation for apps that want to be
-eligible for screenshot-based recommendation surfaces. Play Console accepts other phone
-screenshot sizes too; see the verified requirements below.
+- **iPhone:** 6.9" is the largest accepted size. App Store Connect scales it down for the
+  smaller iPhone slots if you don't upload those. Apple's page currently lists the 6.3"
+  (Dynamic Island, medium) slot as the required one, so use that preset if App Store
+  Connect asks for 6.3" screenshots specifically. The two 6.5" presets remain accepted.
+- **iPad:** 13" is required if the app runs on iPad. Smaller iPads use scaled 13" shots.
+- **Google Play phone:** 1080 x 1920 is Google's minimum for apps to be eligible for
+  screenshot-based recommendation surfaces.
+- **Google Play tablet:** the same 9:16 / 16:9 file suits both the 7-inch and 10-inch
+  slots. 1440 x 2560 is within both Google's large-screen range (1,080–7,680 px) and the
+  general 3,840 px cap.
+
+The result is written beside the source as an opaque 24-bit PNG named
+`<name>-<store>-<width>x<height>.png`. The source aspect ratio is preserved—there is no
+stretching. If it does not match the target canvas, the script centers it and adds white
+padding. Existing files are never overwritten; later runs add `-2`, `-3`, and so on.
 
 ---
 
 ## What the icon generator produces
 
 Output goes to a sibling folder named `<basename>-icons` next to the source PNG
-(`<basename>-icons-android` / `<basename>-icons-ios` for the single-platform commands). If
+(`<basename>-icons-android` / `<basename>-icons-ios` for the single-platform commands); in a
+batch, each source gets its own folder. If
 that folder already exists, `-2`, `-3`, … is appended instead (nothing is overwritten). The
 folder layout inside is the same in every mode, so paths into `Android/` or `iOS/` stay
 stable.
@@ -169,56 +212,74 @@ square filled edge to edge ends up at 46.7dp. The run prints the result, e.g.
 .\uninstall.ps1
 ```
 
-`install.ps1` creates per-user shell keys (no elevation needed). The icon generator is a
-cascading submenu. The parent has only `MUIVerb` and an empty `SubCommands` value, and its
-entries live in its own `shell` subkey:
+`install.ps1` creates per-user shell keys (no elevation needed). Both tools are cascading
+submenus. Each parent has only `MUIVerb` and an empty `SubCommands` value, and its entries
+live in its own `shell` subkey. Every key also carries `MultiSelectModel = Player` (see
+[Batch processing](#batch-processing)):
 
 ```
 HKCU:\Software\Classes\SystemFileAssociations\.png\shell\MakeMobileIcons
     MUIVerb     = "Generate Mobile App Icons"
     SubCommands = ""
-    Icon        = <powershell.exe>,0
     \shell
-        \01All      (default) = "Android + iOS"   \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform All
-        \02Android  (default) = "Android only"    \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform Android
-        \03iOS      (default) = "iOS only"        \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform iOS
+        \01All      (default) = "Android + iOS"   \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform All -FromExplorer
+        \02Android  (default) = "Android only"    \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform Android -FromExplorer
+        \03iOS      (default) = "iOS only"        \command = ... Make-MobileIcons.ps1" -Path "%1" -Platform iOS -FromExplorer
+
+HKCU:\Software\Classes\SystemFileAssociations\.png\shell\ResizeStoreScreenshot
+    MUIVerb     = "Resize Store Screenshot"
+    SubCommands = ""
+    \shell
+        \01 ... \08  (default) = "<preset label>" \command = ... Resize-StoreScreenshot.ps1" -Path "%1" -Preset <preset> -FromExplorer
 ```
 
-The installer deletes and recreates `MakeMobileIcons` each time. A leftover `(default)`
-value or `command` subkey from the older single-command install would otherwise turn the
-parent back into a plain verb.
-
-Each screenshot preset is registered as a direct verb under the same `.png\shell`
-location. Re-run `install.ps1` after updating the project so Explorer receives the new
-entries.
+The installer deletes and recreates both parent keys each time. A leftover `(default)` value
+or `command` subkey from an older single-command install would otherwise turn a parent back
+into a plain verb. It also removes the direct `ResizeStoreScreenshot01`–`05` verbs that
+earlier versions registered. Re-run `install.ps1` after updating the project so Explorer
+receives the new entries.
 
 `uninstall.ps1` removes both the icon and screenshot commands.
 
 ---
 
-## Screenshot specifications followed (verified 2026-09-20)
+## Screenshot specifications followed (verified 2026-10-08)
 
 ### Apple — App Store Connect
 
-- The iPhone presets produce all four requested 6.5-inch accepted sizes: 1242 x 2688,
-  2688 x 1242, 1284 x 2778, and 2778 x 1284.
-- The iPad presets produce all four accepted 13-inch sizes: 2064 x 2752, 2752 x 2064,
-  2048 x 2732, and 2732 x 2048.
-- App Store Connect accepts PNG, JPEG, and JPG screenshots, but screenshots cannot contain
-  transparency or an alpha channel. The resizer therefore writes opaque 24-bit PNGs.
+Apple's page now names display classes instead of inch sizes. The inch labels in the menu
+are the conventional names for those classes.
+
+| Display class | Accepted portrait sizes (landscape = reversed) | Apple's requirement note |
+| --- | --- | --- |
+| iPhone with Dynamic Island (large) — 6.9" | 1260 x 2736, 1290 x 2796, **1320 x 2868** | Falls back to scaled Face ID (large) shots |
+| iPhone with Face ID (large) — 6.5" | **1284 x 2778**, **1242 x 2688** | Required if the app runs on iPhone and Dynamic Island (large) shots aren't provided |
+| iPhone with Dynamic Island (medium) — 6.3" | 1179 x 2556, **1206 x 2622** | Listed under "Required device sizes" for iPhone |
+| iPad 13" | **2064 x 2752**, **2048 x 2732** | Required if the app runs on iPad |
+| iPad 11" and smaller | (various) | Falls back to scaled 13" shots |
+
+Bold sizes have a preset.
+
+- "If your app's user interface is consistent across multiple device sizes … you only need
+  to provide screenshots for the highest required resolution. App Store Connect
+  automatically scales them down for smaller device sizes."
+- 1–10 screenshots per device size, in `.jpeg`, `.jpg` or `.png`. Images can't include
+  alpha channels or transparency, so the resizer writes opaque 24-bit PNGs.
 - Source: Apple App Store Connect Help — Screenshot specifications:
   https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
 
 ### Google — Play Console screenshots
 
-- Required format: JPEG or 24-bit PNG without alpha.
-- Required dimensions: the short side must be at least 320 px, the long side at most
-  3840 px, and the long side cannot exceed twice the short side.
-- For apps to be eligible for recommendation formats that use screenshots, Google asks
-  for at least four screenshots with at least 1080 px resolution: 1080 x 1920 or larger
-  at 9:16 for portrait, or 1920 x 1080 or larger at 16:9 for landscape.
-- For tablets and Chromebooks, Google asks for at least four large-screen screenshots,
-  dimensions between 1080 and 7680 px, and a 9:16 or 16:9 aspect ratio.
+- Format: JPEG or 24-bit PNG without alpha. Up to 8 screenshots per device type, and at
+  least 2 across device types to publish.
+- Dimensions (all screenshots): minimum 320 px, maximum 3,840 px, and the long side can't
+  be more than twice the short side.
+- **Phones:** for apps to be eligible for recommendation formats that use screenshots,
+  provide at least four screenshots at 1080 px or more: 9:16 at 1080 x 1920 or larger
+  (portrait), or 16:9 at 1920 x 1080 or larger (landscape).
+- **Tablets (7-inch and 10-inch) and Chromebooks:** at least 4 screenshots, each side
+  between 1,080 and 7,680 px, at 16:9 (landscape) or 9:16 (portrait). Common third-party
+  sizes such as 1200 x 1920 or 1600 x 2560 are 10:16 and don't meet this.
 - Source: Google Play Console Help — Add preview assets to showcase your app:
   https://support.google.com/googleplay/android-developer/answer/9866151
 
