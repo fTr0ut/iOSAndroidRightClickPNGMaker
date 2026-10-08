@@ -419,8 +419,9 @@ Bold sizes have a preset.
 
 ## Third-party software and licenses
 
-This repository contains only its own scripts and documentation. It does **not** include,
-bundle or modify any third-party code, library or data file. At run time the scripts call
+This repository contains only its own scripts and documentation, released under the MIT
+License (see [License](#license)). It does **not** include, bundle or modify any third-party
+code, library or data file. At run time the scripts call
 ImageMagick, which you install yourself, and read one color profile that ships with Windows.
 Those components stay under their own licenses:
 
@@ -441,3 +442,10 @@ https://github.com/ImageMagick/Dependencies/blob/main/clone-dependencies.sh
 If you redistribute ImageMagick together with these scripts (for example in a packaged
 installer), that distribution must follow ImageMagick's license and those of the libraries
 it contains, including the LGPL-3.0 terms of libheif and libde265.
+
+---
+
+## License
+
+IconRightClick is released under the [MIT License](LICENSE), © 2026 fTr0ut. The
+third-party software listed above is not covered by it and keeps its own licenses.
