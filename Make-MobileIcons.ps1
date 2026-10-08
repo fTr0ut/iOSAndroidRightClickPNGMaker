@@ -199,6 +199,30 @@ function Measure-Artwork {
     return @{ Kind = 'opaque, flat border'; Background = $dominant; Radius = $radius }
 }
 
+function Repair-EdgeSliver {
+    # Fills a thin see-through rim around otherwise opaque art: a sliver left
+    # by an exporter, or the padding of a source a few pixels off square. The
+    # opaque iOS icons would show it as a faint white (dark: black) line along
+    # the edge. The rim may be up to 1% of the side. Returns $true if it
+    # repaired one.
+    param([string] $MasterPath, [int] $Size)
+
+    $b = [int][Math]::Ceiling($Size * 0.01)
+    $bS = $b.ToString() + 'x' + $b.ToString()
+    $whole = Get-MagickOutput @("$MasterPath", '-format', '%[opaque]', 'info:')
+    $inner = Get-MagickOutput @("$MasterPath", '-shave', $bS, '-format', '%[opaque]', 'info:')
+    if ($whole -eq 'True' -or $inner -ne 'True') {
+        return $false
+    }
+
+    # Lay the art over its own opaque interior stretched to full size: opaque
+    # pixels stay exactly as they are, and the rim shows the art beside it.
+    $sizeArg = $Size.ToString() + 'x' + $Size.ToString() + '!'
+    Invoke-Magick @("$MasterPath", '(', '+clone', '-shave', $bS, '-resize', $sizeArg, ')',
+        '+swap', '-compose', 'over', '-composite', '-alpha', 'off', ('PNG32:' + $MasterPath))
+    return $true
+}
+
 # --------------------------------------------------------------------------
 # One source -> one icon set
 # --------------------------------------------------------------------------
@@ -261,6 +285,10 @@ function New-MobileIconSet {
         Invoke-Magick ($info.ReadArgs + @('-background', 'none', '-gravity', 'center',
             '-extent', ($masterMax.ToString() + 'x' + $masterMax.ToString()), ('PNG32:' + $masterPath)))
         Write-Step ("Image was not square (" + $w + "x" + $h + ") -> padded to " + $masterMax + "x" + $masterMax + " with transparency.")
+    }
+    $edgeRepaired = Repair-EdgeSliver -MasterPath $masterPath -Size $masterMax
+    if ($edgeRepaired) {
+        Write-Step "Filled a thin see-through rim along the edge from the art beside it (it would show as a line)."
     }
 
     # ======================================================================
@@ -521,11 +549,17 @@ function New-MobileIconSet {
 
     # --- Per-source summary -----------------------------------------------
     Write-Host ""
-    if ($wasPadded) {
+    if ($wasPadded -and $edgeRepaired) {
+        Write-Host ("Squared          : padded from " + $w + "x" + $h + " to " + $masterMax + "x" + $masterMax + ", padding filled from the art")
+    }
+    elseif ($wasPadded) {
         Write-Host ("Squared          : padded from " + $w + "x" + $h + " to " + $masterMax + "x" + $masterMax + " (transparent)")
     }
     else {
         Write-Host  "Squared          : source was already square"
+    }
+    if ($edgeRepaired -and -not $wasPadded) {
+        Write-Host  "Edges            : see-through rim filled from the art"
     }
     if ($doAndroid) {
         Write-Host ("Background color : " + $bgHex)

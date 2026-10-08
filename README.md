@@ -180,6 +180,12 @@ stable.
 
 - If the source is **not square**, it is padded to a square canvas with **transparent**
   pixels (centered) before generating; this is noted in the run summary.
+- A **thin see-through rim around otherwise opaque art** (at most 1% of the side) is filled
+  in from the art beside it. Such a rim comes from padding a source that is only a few
+  pixels off square (e.g. a hand-cropped photo at 3022x3024) or from a stray sliver an
+  exporter left along an edge. Flattened onto the opaque iOS icons it would show as a faint
+  white line (black on the dark icon). Opaque pixels are never changed, and art with real
+  transparency (a logo on a transparent background) is left as it is.
 - For Android, the image is **analysed** to find where its visible content is and what
   background sits behind it (see [How the Android artwork is fitted](#how-the-android-artwork-is-fitted)).
   The resulting **background color** is used for the adaptive background layer, and the
